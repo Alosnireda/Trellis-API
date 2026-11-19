@@ -2,9 +2,14 @@ import {
   Injectable,
   Logger,
   NotFoundException,
-  ServiceUnavailableException,
+  Optional,
 } from "@nestjs/common";
 import { createHash } from "crypto";
+import {
+  AdminConfigAuditService,
+  AdminConfigActor,
+} from "../audit/admin-config/admin-config-audit.service";
+import { SensitiveAction } from "../audit/sensitive-actions/sensitive-action.enum";
 
 export interface FeatureDefinition {
   key: string;
@@ -44,8 +49,12 @@ export class FeatureRolloutService {
   private readonly features = new Map<string, FeatureDefinition>();
   private readonly consecutiveErrors = new Map<string, number>();
 
+  constructor(
+    @Optional() private readonly adminConfigAudit?: AdminConfigAuditService,
+  ) {}
+
   /**
-   * Register or update a feature configuration.
+   * Register or update a feature configuration in memory directly.
    */
   registerFeature(feature: FeatureDefinition): void {
     this.features.set(feature.key, {
@@ -56,6 +65,88 @@ export class FeatureRolloutService {
       emergencyDisabled: feature.emergencyDisabled ?? false,
     });
     this.consecutiveErrors.set(feature.key, 0);
+  }
+
+  /**
+   * Register or update a feature with fail-closed audit evidence (#425).
+   */
+  async registerFeatureWithEvidence(
+    feature: FeatureDefinition,
+    actor: AdminConfigActor,
+    reason: string,
+    metadata: Record<string, unknown> = {},
+  ): Promise<FeatureDefinition> {
+    const key = feature.key;
+    const applyChange = async () => {
+      this.registerFeature(feature);
+      return this.features.get(key)!;
+    };
+
+    if (!this.adminConfigAudit) {
+      return applyChange();
+    }
+
+    return this.adminConfigAudit.applyWithEvidence({
+      action: SensitiveAction.FEATURE_FLAG_CHANGED,
+      actor,
+      allowedRoles: ["ADMIN", "MAINTAINER"],
+      resourceType: "feature-flag",
+      resourceId: key,
+      reason,
+      metadata: { operation: "register", ...metadata },
+      snapshot: () => this.snapshotFeature(key),
+      apply: applyChange,
+      revert: (before) => this.revertFeature(key, before),
+    });
+  }
+
+  /**
+   * Update an existing feature rollout with fail-closed audit evidence (#425).
+   */
+  async updateFeatureWithEvidence(
+    key: string,
+    patch: Partial<FeatureDefinition>,
+    actor: AdminConfigActor,
+    reason: string,
+    metadata: Record<string, unknown> = {},
+  ): Promise<FeatureDefinition> {
+    const existing = this.features.get(key);
+    if (!existing) {
+      throw new NotFoundException(`Feature '${key}' not registered`);
+    }
+
+    const applyChange = async () => {
+      const updated: FeatureDefinition = {
+        ...existing,
+        ...patch,
+        key, // key immutable
+        rolloutPercentage:
+          patch.rolloutPercentage !== undefined
+            ? Math.min(100, Math.max(0, patch.rolloutPercentage))
+            : existing.rolloutPercentage,
+        allowlistedUsers: patch.allowlistedUsers ?? existing.allowlistedUsers ?? [],
+        allowlistedRoles: patch.allowlistedRoles ?? existing.allowlistedRoles ?? [],
+      };
+      this.features.set(key, updated);
+      return updated;
+    };
+
+    if (!this.adminConfigAudit) {
+      return applyChange();
+    }
+
+    return this.adminConfigAudit.applyWithEvidence({
+      action: SensitiveAction.FEATURE_FLAG_CHANGED,
+      actor,
+      allowedRoles: ["ADMIN", "MAINTAINER"],
+      resourceType: "feature-flag",
+      resourceId: key,
+      reason,
+      metadata: { operation: "update", ...metadata },
+      snapshot: () => this.snapshotFeature(key),
+      apply: applyChange,
+      revert: (before) => this.revertFeature(key, before),
+    });
   }
 
   /**
@@ -124,6 +215,43 @@ export class FeatureRolloutService {
   }
 
   /**
+   * Emergency Disablement with fail-closed audit evidence (#425).
+   */
+  async emergencyDisableWithEvidence(
+    key: string,
+    reason: string,
+    actor: AdminConfigActor,
+    metadata: Record<string, unknown> = {},
+  ): Promise<FeatureDefinition> {
+    const feature = this.features.get(key);
+    if (!feature) {
+      throw new NotFoundException(`Feature '${key}' not registered`);
+    }
+
+    const applyChange = async () => {
+      this.emergencyDisable(key, reason, actor.id);
+      return this.features.get(key)!;
+    };
+
+    if (!this.adminConfigAudit) {
+      return applyChange();
+    }
+
+    return this.adminConfigAudit.applyWithEvidence({
+      action: SensitiveAction.FEATURE_FLAG_CHANGED,
+      actor,
+      allowedRoles: ["ADMIN", "MAINTAINER"],
+      resourceType: "feature-flag",
+      resourceId: key,
+      reason,
+      metadata: { operation: "emergency_disable", ...metadata },
+      snapshot: () => this.snapshotFeature(key),
+      apply: applyChange,
+      revert: (before) => this.revertFeature(key, before),
+    });
+  }
+
+  /**
    * Lift emergency disablement and place into controlled canary rollout (e.g. 5%).
    */
   liftEmergencyDisable(
@@ -145,6 +273,44 @@ export class FeatureRolloutService {
     this.logger.warn(
       `Emergency disablement lifted for '${key}' by ${actor}. Resumed with canary rollout at ${canaryPercentage}%.`,
     );
+  }
+
+  /**
+   * Lift emergency disablement with fail-closed audit evidence (#425).
+   */
+  async liftEmergencyDisableWithEvidence(
+    key: string,
+    actor: AdminConfigActor,
+    canaryPercentage = 5,
+    reason = "Lift emergency disable",
+    metadata: Record<string, unknown> = {},
+  ): Promise<FeatureDefinition> {
+    const feature = this.features.get(key);
+    if (!feature) {
+      throw new NotFoundException(`Feature '${key}' not registered`);
+    }
+
+    const applyChange = async () => {
+      this.liftEmergencyDisable(key, actor.id, canaryPercentage);
+      return this.features.get(key)!;
+    };
+
+    if (!this.adminConfigAudit) {
+      return applyChange();
+    }
+
+    return this.adminConfigAudit.applyWithEvidence({
+      action: SensitiveAction.FEATURE_FLAG_CHANGED,
+      actor,
+      allowedRoles: ["ADMIN", "MAINTAINER"],
+      resourceType: "feature-flag",
+      resourceId: key,
+      reason,
+      metadata: { operation: "lift_emergency_disable", canaryPercentage, ...metadata },
+      snapshot: () => this.snapshotFeature(key),
+      apply: applyChange,
+      revert: (before) => this.revertFeature(key, before),
+    });
   }
 
   /**
@@ -174,6 +340,27 @@ export class FeatureRolloutService {
    */
   recordSuccess(key: string): void {
     this.consecutiveErrors.set(key, 0);
+  }
+
+  private snapshotFeature(key: string): FeatureDefinition | null {
+    const item = this.features.get(key);
+    if (!item) return null;
+    return {
+      ...item,
+      allowlistedUsers: item.allowlistedUsers ? [...item.allowlistedUsers] : [],
+      allowlistedRoles: item.allowlistedRoles ? [...item.allowlistedRoles] : [],
+      emergencyDisabledAt: item.emergencyDisabledAt
+        ? new Date(item.emergencyDisabledAt.getTime())
+        : undefined,
+    };
+  }
+
+  private revertFeature(key: string, before: FeatureDefinition | null): void {
+    if (before === null) {
+      this.features.delete(key);
+    } else {
+      this.features.set(key, { ...before });
+    }
   }
 
   /**
