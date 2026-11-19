@@ -47,6 +47,18 @@ guards and the exception filter.
 | Outbound webhook calls | The ID is pinned in `delivery.metadata.correlationId` when the delivery is created and sent as `x-correlation-id` / `x-request-id` on **every** attempt. A replayed dead letter keeps it. Subscriber-supplied headers with the same name are not overridden. |
 | Other outbound HTTP | Wrap headers with `withCorrelationHeaders(headers)`. |
 
+## Multi-contract workflows (#341)
+
+A workflow that crosses more than one contract keeps the single validated root ID
+for logs, jobs and error responses. When a contract-specific value is needed,
+`deriveContractCorrelationId(contractId, rootCorrelationId?)` derives one from the
+root ID and the contract ID with SHA-256. It returns a deterministic 34-character
+`c-<hex>` value that satisfies the same 64-character oracle charset policy, or
+`null` when either input is invalid. The same root and contract always produce
+the same ID; different contracts produce different IDs even in one workflow.
+Pass the derived value to contract-facing calls/events that accept a correlation
+field, and keep the root ID on the API-facing request.
+
 ## Edge cases
 
 - **Work outside a request** (cron, startup, `onModuleInit`): there is no

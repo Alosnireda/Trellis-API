@@ -2,6 +2,10 @@ import { NotFoundException } from "@nestjs/common";
 import { Reflector } from "@nestjs/core";
 import { IS_PUBLIC_KEY } from "../decorators/public.decorator";
 import { SKIP_KYC_KEY } from "../decorators/skip-kyc.decorator";
+import {
+  CONTRACT_ERROR_CATALOG,
+  findContractError,
+} from "./contract-error-catalog";
 import { ErrorCode } from "./error-codes";
 import { ErrorCatalogController } from "./error-catalog.controller";
 import { REMEDIATION_HINTS } from "./remediation-hints";
@@ -60,6 +64,44 @@ describe("ErrorCatalogController", () => {
 
       const paddedItem = controller.getErrorHint("  validation_error  ");
       expect(paddedItem.code).toBe(ErrorCode.VALIDATION_ERROR);
+    });
+  });
+
+  describe("Contract error catalog (#340)", () => {
+    it("exposes every known contract error with a stable client mapping", () => {
+      const result = controller.getContractCatalog();
+      expect(result.total).toBe(result.catalog.length);
+      expect(result.total).toBeGreaterThan(0);
+
+      for (const entry of result.catalog) {
+        expect(entry.contractCode).toMatch(/^[A-Z0-9_]+$/);
+        expect(Object.values(ErrorCode)).toContain(entry.errorCode);
+        expect(entry.httpStatus).toBeGreaterThanOrEqual(200);
+        expect(entry.httpStatus).toBeLessThan(600);
+        expect(entry.clientMessage).toBeTruthy();
+        expect(entry.remediationHint).toBeTruthy();
+      }
+    });
+
+    it("allows duplicate contract codes only when the mapping is identical", () => {
+      const seen = new Map<string, string>();
+      for (const entry of CONTRACT_ERROR_CATALOG) {
+        const serialized = JSON.stringify(entry);
+        const previous = seen.get(entry.contractCode);
+        expect(previous === undefined || previous === serialized).toBe(true);
+        seen.set(entry.contractCode, serialized);
+      }
+    });
+
+    it("normalizes lookup codes and rejects unknown codes", () => {
+      expect(findContractError(" invalid_payload ")?.contractCode).toBe(
+        "INVALID_PAYLOAD",
+      );
+      expect(findContractError("PAYLOAD_MISMATCH")?.errorCode).toBe(
+        ErrorCode.ORACLE_VERIFICATION_FAILED,
+      );
+      expect(findContractError("NOT_A_CODE")).toBeUndefined();
+      expect(findContractError(undefined)).toBeUndefined();
     });
   });
 

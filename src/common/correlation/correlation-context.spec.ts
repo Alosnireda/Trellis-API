@@ -1,6 +1,7 @@
 import {
   CORRELATION_ID_HEADER,
   JOB_CORRELATION_FIELD,
+  deriveContractCorrelationId,
   MAX_CORRELATION_ID_LENGTH,
   REQUEST_ID_HEADER,
   getCorrelationContext,
@@ -105,6 +106,36 @@ describe("correlation context (#270)", () => {
         ),
       );
       expect(seen).toEqual(Array.from({ length: 25 }, (_, i) => `req-${i}`));
+    });
+  });
+
+  describe("multi-contract correlation IDs (#341)", () => {
+    it("derives a stable, normalized ID from a root ID and contract ID", () => {
+      const first = deriveContractCorrelationId("contract-one", "root-1");
+      const second = deriveContractCorrelationId(" contract-one ", " root-1 ");
+      expect(first).toBe(second);
+      expect(first).toMatch(/^c-[0-9a-f]{32}$/);
+      expect(normalizeCorrelationId(first)).toBe(first);
+    });
+
+    it("isolates different contracts while preserving the same root", () => {
+      const one = deriveContractCorrelationId("contract-one", "root-1");
+      const two = deriveContractCorrelationId("contract-two", "root-1");
+      expect(one).not.toBe(two);
+    });
+
+    it("uses the active correlation context when no root is supplied", () => {
+      runWithCorrelation("root-1", () => {
+        expect(deriveContractCorrelationId("contract-one")).toBe(
+          deriveContractCorrelationId("contract-one", "root-1"),
+        );
+      });
+    });
+
+    it("returns null for invalid root or contract IDs", () => {
+      expect(deriveContractCorrelationId("bad contract", "root-1")).toBeNull();
+      expect(deriveContractCorrelationId("contract-one", "bad\nroot")).toBeNull();
+      expect(deriveContractCorrelationId("contract-one", undefined)).toBeNull();
     });
   });
 

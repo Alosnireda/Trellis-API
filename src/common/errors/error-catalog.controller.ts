@@ -2,6 +2,8 @@ import { Controller, Get, Param, NotFoundException } from "@nestjs/common";
 import { ApiTags, ApiOperation, ApiResponse, ApiParam } from "@nestjs/swagger";
 import { Public } from "../decorators/public.decorator";
 import { SkipKyc } from "../decorators/skip-kyc.decorator";
+import { CONTRACT_ERROR_CATALOG } from "./contract-error-catalog";
+import type { ContractErrorMapping } from "./contract-error-catalog";
 import { ErrorCode } from "./error-codes";
 import { REMEDIATION_HINTS, RemediationHint } from "./remediation-hints";
 import { ERROR_TAXONOMY, ErrorTaxonomyEntry } from "./error-taxonomy";
@@ -43,6 +45,23 @@ export class ErrorCatalogController {
     });
 
     return { total: items.length, catalog: items };
+  }
+
+  @Get("contracts")
+  @ApiOperation({
+    summary: "List contract error codes with stable client mappings",
+    description:
+      "Returns contract-level error codes mapped to stable API ErrorCodes, HTTP status and retry guidance.",
+  })
+  @ApiResponse({ status: 200, description: "Catalog of contract error mappings" })
+  getContractCatalog(): {
+    total: number;
+    catalog: readonly ContractErrorMapping[];
+  } {
+    return {
+      total: CONTRACT_ERROR_CATALOG.length,
+      catalog: CONTRACT_ERROR_CATALOG,
+    };
   }
 
   @Get(":code")
