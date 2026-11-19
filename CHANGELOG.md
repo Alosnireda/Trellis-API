@@ -8,6 +8,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+- Expiring, single-use capability tokens for sensitive actions: minted with
+  `POST /auth/capabilities` (TOTP step-up when 2FA is on), required on API key
+  create/revoke when `CAPABILITY_TOKENS_ENFORCED=true`, consumed only on
+  success so failed requests can be retried ([#273](docs/CAPABILITY_TOKENS.md))
 - Request correlation across the API, background workers, retries and outbound
   webhooks via a validated `x-correlation-id` (`x-request-id` still honoured)
   ([#270](docs/REQUEST_CORRELATION.md))
