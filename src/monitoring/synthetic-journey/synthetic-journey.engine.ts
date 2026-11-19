@@ -30,6 +30,7 @@ export interface SyntheticStepExecutionResult {
   latencyMs: number;
   slaThresholdMs: number;
   slaBreached: boolean;
+  attempts?: number;
   httpStatus?: number;
   error?: {
     code: string;
@@ -68,6 +69,7 @@ export interface SyntheticJourneyContext {
   now(): number;
   simulateFailureStep?: string;
   simulateLatencyStep?: { stepId: string; extraMs: number };
+  simulateTransientFailureStep?: { stepId: string; failAttempts: number };
 }
 
 export interface SyntheticJourneyStepDefinition {
@@ -86,6 +88,8 @@ export interface SyntheticJourneyOptions {
   trigger?: "SCHEDULED" | "MANUAL" | "CLI" | "CI";
   simulateFailureStep?: string;
   simulateLatencyStep?: { stepId: string; extraMs: number };
+  simulateTransientFailureStep?: { stepId: string; failAttempts: number };
+  maxStepRetries?: number;
   timeoutMs?: number;
 }
 
@@ -277,8 +281,10 @@ export class SyntheticJourneyEngine {
       now: () => Date.now(),
       simulateFailureStep: options.simulateFailureStep,
       simulateLatencyStep: options.simulateLatencyStep,
+      simulateTransientFailureStep: options.simulateTransientFailureStep,
     };
 
+    const maxRetries = Math.max(0, options.maxStepRetries ?? 0);
     const stepResults: SyntheticStepExecutionResult[] = [];
     const dependencyBlames = new Set<DependencyBlameTarget>();
     let hasFailure = false;
@@ -301,40 +307,62 @@ export class SyntheticJourneyEngine {
       }
 
       const stepStart = Date.now();
-      try {
-        let simulatedExtraLatency = 0;
-        if (options.simulateLatencyStep?.stepId === step.id) {
-          simulatedExtraLatency = options.simulateLatencyStep.extraMs;
-          await new Promise((r) => setTimeout(r, simulatedExtraLatency));
+      let attempts = 0;
+      let lastError: any;
+      let succeeded = false;
+
+      while (attempts <= maxRetries) {
+        attempts += 1;
+        try {
+          if (options.simulateLatencyStep?.stepId === step.id && attempts === 1) {
+            await new Promise((r) => setTimeout(r, options.simulateLatencyStep!.extraMs));
+          }
+
+          if (
+            options.simulateTransientFailureStep?.stepId === step.id &&
+            attempts <= options.simulateTransientFailureStep.failAttempts
+          ) {
+            throw new Error(`TRANSIENT_STEP_FAILURE: ${step.dependency} temporary timeout on attempt ${attempts}`);
+          }
+
+          const res = await step.execute(context);
+          const stepLatency = Date.now() - stepStart;
+          const slaBreached = stepLatency > step.slaThresholdMs;
+
+          let status: JourneyStepStatus = "PASSED";
+          if (slaBreached) {
+            status = "DEGRADED";
+            hasDegraded = true;
+            dependencyBlames.add(step.dependency);
+          }
+
+          stepResults.push({
+            stepId: step.id,
+            stepName: step.name,
+            targetService: step.targetService,
+            dependency: step.dependency,
+            status,
+            latencyMs: stepLatency,
+            slaThresholdMs: step.slaThresholdMs,
+            slaBreached,
+            attempts,
+            httpStatus: res.httpStatus ?? 200,
+            metadata: {
+              ...(res.metadata ?? {}),
+              ...(attempts > 1 ? { recoveredAfterRetries: attempts - 1 } : {}),
+            },
+          });
+          succeeded = true;
+          break;
+        } catch (err: any) {
+          lastError = err;
         }
+      }
 
-        const res = await step.execute(context);
-        const stepLatency = Date.now() - stepStart;
-        const slaBreached = stepLatency > step.slaThresholdMs;
-
-        let status: JourneyStepStatus = "PASSED";
-        if (slaBreached) {
-          status = "DEGRADED";
-          hasDegraded = true;
-          dependencyBlames.add(step.dependency);
-        }
-
-        stepResults.push({
-          stepId: step.id,
-          stepName: step.name,
-          targetService: step.targetService,
-          dependency: step.dependency,
-          status,
-          latencyMs: stepLatency,
-          slaThresholdMs: step.slaThresholdMs,
-          slaBreached,
-          httpStatus: res.httpStatus ?? 200,
-          metadata: res.metadata,
-        });
-      } catch (err: any) {
+      if (!succeeded) {
         hasFailure = true;
         const stepLatency = Date.now() - stepStart;
-        const { blame, remediation } = this.attributeBlame(step, err);
+        const { blame, remediation } = this.attributeBlame(step, lastError);
         dependencyBlames.add(blame);
 
         stepResults.push({
@@ -346,9 +374,10 @@ export class SyntheticJourneyEngine {
           latencyMs: stepLatency,
           slaThresholdMs: step.slaThresholdMs,
           slaBreached: true,
+          attempts,
           error: {
-            code: err.code || "SYNTHETIC_STEP_FAILED",
-            message: err.message || "Unknown error during synthetic step execution",
+            code: lastError?.code || "SYNTHETIC_STEP_FAILED",
+            message: lastError?.message || "Unknown error during synthetic step execution",
             blame,
             remediation,
           },

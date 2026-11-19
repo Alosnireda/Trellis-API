@@ -15,6 +15,8 @@ import { NotificationTemplateService } from './notification-template.service';
 import { NotificationAggregationService } from './notification-aggregation.service';
 import { NotificationQueueService } from './notification-queue.service';
 import { CursorPaginationService } from '../../common/pagination/cursor-pagination.service';
+import { NotificationDeduplicationService } from './notification-deduplication.service';
+import { DeliveryReceiptDto } from '../dto/delivery-receipt.dto';
 
 @Injectable()
 export class NotificationService {
@@ -30,6 +32,7 @@ export class NotificationService {
     private readonly queueService: NotificationQueueService,
     private readonly eventEmitter: EventEmitter2,
     private readonly cursorPagination: CursorPaginationService,
+    private readonly deduplicationService: NotificationDeduplicationService,
   ) {}
 
   /**
@@ -38,18 +41,14 @@ export class NotificationService {
   async send(dto: SendNotificationDto): Promise<Notification> {
     // Check deduplication key (for critical lifecycle and recovery events)
     if (dto.deduplicationKey) {
-      const existing = await this.notificationRepo.findOne({
-        where: {
-          userId: dto.userId,
-          deduplicationKey: dto.deduplicationKey,
-          deleted: false,
-        },
-      });
-      if (existing) {
-        this.logger.log(
-          `Notification deduplicated for user ${dto.userId} with key "${dto.deduplicationKey}" (id: ${existing.id})`,
-        );
-        return existing;
+      const duplicateResult = await this.deduplicationService.findDuplicate(
+        dto.userId,
+        dto.deduplicationKey,
+      );
+      if (duplicateResult) {
+        const { duplicate, receipt } = duplicateResult;
+        (duplicate as any).receipt = receipt;
+        return duplicate;
       }
     }
 
@@ -184,8 +183,39 @@ export class NotificationService {
       );
     }
 
+    const receipt = await this.deduplicationService.generateReceipt(saved, false);
+    (saved as any).receipt = receipt;
+
     this.logger.log(`Notification created: ${saved.id} for user ${dto.userId}`);
     return saved;
+  }
+
+  /**
+   * Retrieves the delivery receipt for a notification ID.
+   */
+  async getDeliveryReceipt(
+    notificationId: string,
+    requestingUserId?: string,
+    isAdmin = false,
+  ): Promise<DeliveryReceiptDto> {
+    return this.deduplicationService.getReceiptByNotificationId(
+      notificationId,
+      requestingUserId,
+      isAdmin,
+    );
+  }
+
+  /**
+   * Retrieves the delivery receipt by user ID and deduplication key.
+   */
+  async getDeliveryReceiptByKey(
+    userId: string,
+    deduplicationKey: string,
+  ): Promise<DeliveryReceiptDto> {
+    return this.deduplicationService.getReceiptByDeduplicationKey(
+      userId,
+      deduplicationKey,
+    );
   }
 
   /**

@@ -1,6 +1,12 @@
+import { ForbiddenException } from "@nestjs/common";
 import { Test, TestingModule } from "@nestjs/testing";
 import { ConfigService } from "@nestjs/config";
 import { SyntheticJourneyMonitorService } from "./synthetic-journey.service";
+jest.mock("../../common/decorators/skip-kyc.decorator", () => ({
+  SkipKyc: () => () => undefined,
+}));
+
+import { SyntheticJourneyController } from "./synthetic-journey.controller";
 import { MonitoringMetricsService } from "../monitoring-metrics.service";
 import { SyntheticJourneyStepDefinition } from "./synthetic-journey.types";
 
@@ -152,6 +158,74 @@ describe("SyntheticJourneyMonitorService", () => {
         service.startScheduler(5000);
         service.stopScheduler();
       }).not.toThrow();
+    });
+  });
+
+  describe("Transient Retry & Fault-Injection Authorization", () => {
+    it("should recover on retry when transient failures are within maxStepRetries", async () => {
+      const report = await service.runJourney({
+        trigger: "MANUAL",
+        maxStepRetries: 2,
+        simulateTransientFailureStep: {
+          stepId: "step_defi_yield",
+          failAttempts: 2,
+        },
+      });
+
+      expect(report.status).toBe("SUCCESS");
+      const defiStep = report.steps.find((s) => s.stepId === "step_defi_yield");
+      expect(defiStep?.status).toBe("PASSED");
+      expect(defiStep?.attempts).toBe(3);
+      expect(defiStep?.metadata?.recoveredAfterRetries).toBe(2);
+    });
+
+    it("should fail and attribute blame when transient failures exceed maxStepRetries", async () => {
+      const report = await service.runJourney({
+        trigger: "MANUAL",
+        maxStepRetries: 1,
+        simulateTransientFailureStep: {
+          stepId: "step_settlement_reconcile",
+          failAttempts: 3,
+        },
+      });
+
+      expect(report.status).toBe("FAILED");
+      expect(report.dependencyBlame).toContain("STELLAR_HORIZON");
+      const reconcileStep = report.steps.find((s) => s.stepId === "step_settlement_reconcile");
+      expect(reconcileStep?.status).toBe("FAILED");
+      expect(reconcileStep?.attempts).toBe(2);
+    });
+
+    it("should enforce authorization for fault injection when SYNTHETIC_FAULT_INJECTION_TOKEN is set", async () => {
+      const controller = new SyntheticJourneyController(service);
+      const mockRes = { status: jest.fn() } as any;
+      const prevToken = process.env.SYNTHETIC_FAULT_INJECTION_TOKEN;
+      process.env.SYNTHETIC_FAULT_INJECTION_TOKEN = "super-secret-admin-token";
+
+      try {
+        await expect(
+          controller.runJourney(mockRes, "step_auth_verify", undefined, undefined),
+        ).rejects.toThrow(ForbiddenException);
+
+        await expect(
+          controller.runJourney(mockRes, "step_auth_verify", undefined, "wrong-token"),
+        ).rejects.toThrow(ForbiddenException);
+
+        const report = await controller.runJourney(
+          mockRes,
+          "step_auth_verify",
+          "0",
+          "super-secret-admin-token",
+        );
+        expect(report.status).toBe("FAILED");
+        expect(mockRes.status).toHaveBeenCalledWith(503);
+      } finally {
+        if (prevToken === undefined) {
+          delete process.env.SYNTHETIC_FAULT_INJECTION_TOKEN;
+        } else {
+          process.env.SYNTHETIC_FAULT_INJECTION_TOKEN = prevToken;
+        }
+      }
     });
   });
 });

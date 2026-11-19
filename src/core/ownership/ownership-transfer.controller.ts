@@ -21,13 +21,17 @@ import {
 } from "@nestjs/swagger";
 import { JwtAuthGuard } from "../auth/jwt.guard";
 import { OwnershipTransferService } from "./ownership-transfer.service";
-import { OwnershipTransfer } from "./entities/ownership-transfer.entity";
+import {
+  OwnershipTransfer,
+  OwnershipTransferAuditEvent,
+} from "./entities/ownership-transfer.entity";
 
 export class CreateTransferRequestDto {
   resourceType!: string;
   resourceId!: string;
   proposedOwnerId!: string;
   expiresInHours?: number;
+  idempotencyKey?: string;
 }
 
 export class ReasonDto {
@@ -55,6 +59,7 @@ export class OwnershipTransferController {
       currentOwnerId: userId,
       proposedOwnerId: dto.proposedOwnerId,
       expiresInHours: dto.expiresInHours,
+      idempotencyKey: dto.idempotencyKey,
     });
   }
 
@@ -103,8 +108,21 @@ export class OwnershipTransferController {
   @ApiOperation({ summary: "Get ownership transfer details" })
   @ApiParam({ name: "id", description: "Transfer request ID" })
   @ApiResponse({ status: 200, description: "Ownership transfer status" })
-  async get(@Param("id") id: string): Promise<OwnershipTransfer> {
-    return await this.transferService.getTransfer(id);
+  async get(@Param("id") id: string, @Req() req: any): Promise<OwnershipTransfer> {
+    const userId = req.user?.id ?? req.user?.sub;
+    return await this.transferService.getTransfer(id, userId);
+  }
+
+  @Get(":id/history")
+  @ApiOperation({ summary: "Get chronological audit history for an ownership transfer" })
+  @ApiParam({ name: "id", description: "Transfer request ID" })
+  @ApiResponse({ status: 200, description: "Ownership transfer audit history" })
+  async history(
+    @Param("id") id: string,
+    @Req() req: any,
+  ): Promise<OwnershipTransferAuditEvent[]> {
+    const userId = req.user?.id ?? req.user?.sub;
+    return await this.transferService.getAuditHistory(id, userId);
   }
 
   @Get()

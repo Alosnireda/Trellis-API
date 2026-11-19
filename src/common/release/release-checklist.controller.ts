@@ -21,6 +21,14 @@ import { RolesGuard } from "../guard/roles.guard";
 import { Roles } from "../guard/roles.decorator";
 import { Role } from "../guard/roles.enum";
 import { AutomatedVerificationPayload } from "./release-readiness.types";
+import {
+  buildReproducibleReleaseArtifact,
+  verifyReleaseArtifact,
+  BuildArtifactOptions,
+  ReproducibleReleaseManifest,
+  VerifyArtifactOptions,
+  ArtifactVerificationReport,
+} from "./reproducible-artifact";
 
 /**
  * REST endpoints for release readiness checklist management.
@@ -231,5 +239,36 @@ export class ReleaseChecklistController {
       message: `Release ${prNumber} approved by ${dto.approvedBy}`,
       canDeploy: true,
     };
+  }
+
+  /**
+   * POST /api/v1/admin/release-checklist/artifact/build
+   * Build a canonical, reproducible release artifact manifest.
+   */
+  @Post("artifact/build")
+  @HttpCode(201)
+  buildArtifact(@Body() dto: BuildArtifactOptions): ReproducibleReleaseManifest {
+    return buildReproducibleReleaseArtifact(dto);
+  }
+
+  /**
+   * POST /api/v1/admin/release-checklist/artifact/verify
+   * Verify reproducible release artifact files and manifest digests.
+   */
+  @Post("artifact/verify")
+  @HttpCode(200)
+  async verifyArtifact(
+    @Body()
+    dto: {
+      manifest: ReproducibleReleaseManifest;
+      files: Array<{ path: string; content: string }>;
+      options?: VerifyArtifactOptions;
+    },
+  ): Promise<ArtifactVerificationReport> {
+    const fileMap = new Map<string, string | Buffer>();
+    for (const f of dto.files || []) {
+      fileMap.set(f.path, f.content);
+    }
+    return verifyReleaseArtifact(dto.manifest, fileMap, dto.options);
   }
 }

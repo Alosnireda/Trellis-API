@@ -467,7 +467,7 @@ export class DeterministicStateMachine<
     };
     this.auditTrail.push(entry);
     if (!allowed) {
-      this.logger.warn(`${kead} ${fromState} -> ${toState} rejected: ${reason ?? "unknown"}`);
+      this.logger.warn(`${kind} ${fromState} -> ${toState} rejected: ${reason ?? "unknown"}`);
     }
   }
 }

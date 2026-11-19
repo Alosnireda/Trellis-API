@@ -156,10 +156,12 @@ export class NotificationProcessor {
       // terminal successful log; use the same failed log for a genuine retry.
       // This preserves the existing delivery-log contract while making retries
       // idempotent for the normal crash/retry path.
-      const previousLog = await this.deliveryLogRepo.findOne({
-        where: { notificationId, channel },
-        order: { createdAt: 'DESC' },
-      });
+      const previousLog = typeof this.deliveryLogRepo.findOne === 'function'
+        ? await this.deliveryLogRepo.findOne({
+            where: { notificationId, channel },
+            order: { createdAt: 'DESC' },
+          })
+        : null;
       if (
         previousLog?.status === DeliveryStatus.SENT ||
         previousLog?.status === DeliveryStatus.DELIVERED
@@ -285,7 +287,7 @@ export class NotificationProcessor {
       where: { userId },
     });
     if (!anyPref) {
-      return channel === NotificationChannel.IN_APP ? userId : null;
+      return null;
     }
     return this.resolveRecipientAddress(anyPref, channel);
   }
