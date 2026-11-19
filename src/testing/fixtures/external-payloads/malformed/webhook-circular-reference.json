@@ -1,0 +1,19 @@
+{
+  "id": "webhook-circular-reference",
+  "category": "malformed",
+  "target": "api.body-validation",
+  "description": "Webhook payload with circular reference structure (recursive object)",
+  "input": {
+    "provider": "stripe",
+    "headers": {
+      "stripe-signature": "t=1800000000,v1=signature"
+    },
+    "rawBody": "{\"id\":\"evt_circular\",\"type\":\"charge.succeeded\",\"data\":{\"object\":{\"id\":\"ch_123\",\"nested\":{\"$ref\":\"#/data/object/nested\"}}}}",
+    "timestamp": 1800000000
+  },
+  "expected": {
+    "rejected": true,
+    "reason": "Circular reference detected",
+    "fields": ["data.object.nested"]
+  }
+}
