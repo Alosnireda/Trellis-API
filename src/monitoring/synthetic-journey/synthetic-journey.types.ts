@@ -32,6 +32,7 @@ export interface SyntheticStepExecutionResult {
   latencyMs: number;
   slaThresholdMs: number;
   slaBreached: boolean;
+  attempts?: number;
   httpStatus?: number;
   error?: {
     code: string;
@@ -70,6 +71,7 @@ export interface SyntheticJourneyContext {
   now(): number;
   simulateFailureStep?: string;
   simulateLatencyStep?: { stepId: string; extraMs: number };
+  simulateTransientFailureStep?: { stepId: string; failAttempts: number };
 }
 
 export interface SyntheticJourneyStepDefinition {
@@ -88,5 +90,7 @@ export interface SyntheticJourneyOptions {
   trigger?: "SCHEDULED" | "MANUAL" | "CLI" | "CI";
   simulateFailureStep?: string;
   simulateLatencyStep?: { stepId: string; extraMs: number };
+  simulateTransientFailureStep?: { stepId: string; failAttempts: number };
+  maxStepRetries?: number;
   timeoutMs?: number;
 }
