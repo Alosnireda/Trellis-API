@@ -4,6 +4,7 @@ import { SensitiveActionEvent } from "../entities/sensitive-action-event.entity"
 import { SensitiveActionChainHead } from "../entities/sensitive-action-chain-head.entity";
 import { SensitiveActionAuditController } from "./sensitive-action-audit.controller";
 import { SensitiveActionAuditService } from "./sensitive-action-audit.service";
+import { ExportSigningService } from "../algorithms/export-signing.service";
 
 /**
  * Audit-grade trail for sensitive user and maintainer actions.
@@ -15,7 +16,7 @@ import { SensitiveActionAuditService } from "./sensitive-action-audit.service";
 @Module({
   imports: [TypeOrmModule.forFeature([SensitiveActionEvent, SensitiveActionChainHead])],
   controllers: [SensitiveActionAuditController],
-  providers: [SensitiveActionAuditService],
+  providers: [SensitiveActionAuditService, ExportSigningService],
   exports: [SensitiveActionAuditService],
 })
 export class SensitiveActionAuditModule {}
