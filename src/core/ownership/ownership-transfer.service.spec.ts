@@ -1,5 +1,8 @@
 import { OwnershipTransferService } from "./ownership-transfer.service";
-import { OwnershipTransferStatus } from "./entities/ownership-transfer.entity";
+import {
+  OwnershipTransferAuditAction,
+  OwnershipTransferStatus,
+} from "./entities/ownership-transfer.entity";
 import {
   BadRequestException,
   ForbiddenException,
@@ -193,6 +196,104 @@ describe("OwnershipTransferService", () => {
       const outgoingForAlice = await service.listTransfers("user-alice", "outgoing");
       expect(outgoingForAlice).toHaveLength(1);
       expect(outgoingForAlice[0].resourceId).toBe("1");
+    });
+  });
+
+  describe("Audit History, Idempotent Retry, Authorization & Expiry Sweep", () => {
+    it("should record chronological audit history across initiation, acceptance, and denial", async () => {
+      const transfer = await service.initiateTransfer({
+        resourceType: "portfolio",
+        resourceId: "port-audit-1",
+        currentOwnerId: "user-alice",
+        proposedOwnerId: "user-bob",
+      });
+
+      await expect(service.acceptTransfer(transfer.id, "user-eve")).rejects.toThrow(
+        ForbiddenException,
+      );
+
+      await service.acceptTransfer(transfer.id, "user-bob");
+
+      const history = await service.getAuditHistory(transfer.id, "user-alice");
+      expect(history.map((e) => e.action)).toEqual([
+        OwnershipTransferAuditAction.INITIATED,
+        OwnershipTransferAuditAction.ACCESS_DENIED,
+        OwnershipTransferAuditAction.ACCEPTED,
+      ]);
+      expect(history[2].fromStatus).toBe(OwnershipTransferStatus.PENDING);
+      expect(history[2].toStatus).toBe(OwnershipTransferStatus.ACCEPTED);
+    });
+
+    it("should enforce participant authorization on getTransfer and getAuditHistory", async () => {
+      const transfer = await service.initiateTransfer({
+        resourceType: "wallet",
+        resourceId: "wall-auth-1",
+        currentOwnerId: "user-alice",
+        proposedOwnerId: "user-bob",
+      });
+
+      await expect(service.getTransfer(transfer.id, "user-alice")).resolves.toBeDefined();
+      await expect(service.getTransfer(transfer.id, "user-bob")).resolves.toBeDefined();
+      await expect(service.getTransfer(transfer.id, "user-eve")).rejects.toThrow(
+        ForbiddenException,
+      );
+      await expect(service.getAuditHistory(transfer.id, "user-eve")).rejects.toThrow(
+        ForbiddenException,
+      );
+    });
+
+    it("should handle idempotent initiateTransfer retries and reject mismatched key reuse", async () => {
+      const first = await service.initiateTransfer({
+        resourceType: "portfolio",
+        resourceId: "port-idem-1",
+        currentOwnerId: "user-alice",
+        proposedOwnerId: "user-bob",
+        idempotencyKey: "idem-key-123",
+      });
+
+      const retry = await service.initiateTransfer({
+        resourceType: "portfolio",
+        resourceId: "port-idem-1",
+        currentOwnerId: "user-alice",
+        proposedOwnerId: "user-bob",
+        idempotencyKey: "idem-key-123",
+      });
+
+      expect(retry.id).toBe(first.id);
+
+      await expect(
+        service.initiateTransfer({
+          resourceType: "portfolio",
+          resourceId: "port-idem-2",
+          currentOwnerId: "user-alice",
+          proposedOwnerId: "user-bob",
+          idempotencyKey: "idem-key-123",
+        }),
+      ).rejects.toThrow(ConflictException);
+
+      const history = await service.getAuditHistory(first.id, "user-alice");
+      expect(history.map((e) => e.action)).toContain(
+        OwnershipTransferAuditAction.RETRIED_NOOP,
+      );
+    });
+
+    it("should idempotently expire pending transfers during batch sweep", async () => {
+      const transfer = await service.initiateTransfer({
+        resourceType: "apiKey",
+        resourceId: "key-exp-1",
+        currentOwnerId: "user-alice",
+        proposedOwnerId: "user-bob",
+      });
+      transfer.expiresAt = new Date(Date.now() - 5000);
+
+      const firstSweep = await service.expirePendingTransfers();
+      expect(firstSweep).toBe(1);
+
+      const secondSweep = await service.expirePendingTransfers();
+      expect(secondSweep).toBe(0);
+
+      const updated = await service.getTransfer(transfer.id, "user-alice");
+      expect(updated.status).toBe(OwnershipTransferStatus.EXPIRED);
     });
   });
 });

@@ -69,6 +69,7 @@ const SENSITIVE_PATTERNS: RegExp[] = [
 
 const EXTRA_SENSITIVE_KEYS = new Set([
   ...SNAPSHOT_REDACTED_FIELDS.map((f) => f.toLowerCase()),
+  'token',
   'jwt',
   'jwtsecret',
   'jwt_secret',
@@ -655,7 +656,7 @@ export class IncidentDrillService {
       },
       {
         operationId: 'op-port-102',
-        operationType: OperationType.Rebalance,
+        operationType: OperationType.Rebalancing,
         userId: 'usr-102',
         title: 'Portfolio Valuation Re-sync',
         description: 'Recalculate portfolio totalValue from verified holdings.',

@@ -1,5 +1,15 @@
-import { Controller, Get, Post, Query, Res, HttpStatus } from "@nestjs/common";
+import {
+  Controller,
+  ForbiddenException,
+  Get,
+  Headers,
+  HttpStatus,
+  Post,
+  Query,
+  Res,
+} from "@nestjs/common";
 import { ApiOperation, ApiResponse, ApiTags, ApiQuery } from "@nestjs/swagger";
+import { timingSafeEqual } from "crypto";
 import { Response } from "express";
 import { Public } from "../../common/decorators/public.decorator";
 import { SkipKyc } from "../../common/decorators/skip-kyc.decorator";
@@ -41,14 +51,27 @@ export class SyntheticJourneyController {
       "Runs the full synthetic end-to-end happy path flow and returns latency metrics and dependency blame diagnostics.",
   })
   @ApiQuery({ name: "simulateFailureStep", required: false, type: String })
+  @ApiQuery({ name: "maxRetries", required: false, type: Number })
   @ApiResponse({ status: 200, description: "Executed synthetic journey report" })
   async runJourney(
     @Res({ passthrough: true }) res: Response,
     @Query("simulateFailureStep") simulateFailureStep?: string,
+    @Query("maxRetries") maxRetries?: string,
+    @Headers("x-synthetic-admin-token") adminToken?: string,
   ): Promise<SyntheticJourneyReport> {
+    if (simulateFailureStep) {
+      this.assertFaultInjectionAuthorized(adminToken);
+    }
+
+    const parsedRetries = maxRetries !== undefined ? Number.parseInt(maxRetries, 10) : 0;
+    const boundedRetries = Number.isFinite(parsedRetries)
+      ? Math.min(Math.max(parsedRetries, 0), 3)
+      : 0;
+
     const report = await this.syntheticMonitorService.runJourney({
       trigger: "MANUAL",
       simulateFailureStep,
+      maxStepRetries: boundedRetries,
     });
 
     if (report.status === "FAILED") {
@@ -58,5 +81,30 @@ export class SyntheticJourneyController {
     }
 
     return report;
+  }
+
+  private assertFaultInjectionAuthorized(providedToken?: string): void {
+    const expectedToken = process.env.SYNTHETIC_FAULT_INJECTION_TOKEN;
+    if (!expectedToken) {
+      if (process.env.NODE_ENV === "production") {
+        throw new ForbiddenException(
+          "Fault injection is disabled in production unless SYNTHETIC_FAULT_INJECTION_TOKEN is configured.",
+        );
+      }
+      return;
+    }
+
+    if (!providedToken) {
+      throw new ForbiddenException("Missing x-synthetic-admin-token for fault injection.");
+    }
+
+    const expectedBuf = Buffer.from(expectedToken, "utf8");
+    const providedBuf = Buffer.from(providedToken, "utf8");
+    if (
+      expectedBuf.length !== providedBuf.length ||
+      !timingSafeEqual(expectedBuf, providedBuf)
+    ) {
+      throw new ForbiddenException("Invalid x-synthetic-admin-token for fault injection.");
+    }
   }
 }
