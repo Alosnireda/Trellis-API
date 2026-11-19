@@ -184,13 +184,16 @@ describe("BackgroundWorkerService", () => {
   });
 
   describe("cancelJob", () => {
-    it("should cancel a pending job", async () => {
+    it("should cancel a pending job and set CANCELLED status", async () => {
       const payload = { type: "test.job", payload: { data: "test" } };
       const job = await service.enqueue(payload);
 
       const cancelled = await service.cancelJob(job.id);
       expect(cancelled).toBe(true);
       expect(mockQueue.getJob).toHaveBeenCalledWith(job.id);
+      const updated = await service.getJob(job.id);
+      expect(updated?.status).toBe(JobStatus.CANCELLED);
+      expect(updated?.cancelledAt).toBeDefined();
     });
 
     it("should not cancel a completed job", async () => {
@@ -199,6 +202,60 @@ describe("BackgroundWorkerService", () => {
 
       (service as any).updateJobStatus(job.id, JobStatus.COMPLETED);
       const cancelled = await service.cancelJob(job.id);
+      expect(cancelled).toBe(false);
+      const updated = await service.getJob(job.id);
+      expect(updated?.status).toBe(JobStatus.COMPLETED);
+    });
+
+    it("should not cancel an already-cancelled job", async () => {
+      const payload = { type: "test.job", payload: {} };
+      const job = await service.enqueue(payload);
+      await service.cancelJob(job.id);
+      const second = await service.cancelJob(job.id);
+      expect(second).toBe(false);
+    });
+
+    it("should not cancel a dead-lettered job", async () => {
+      const payload = { type: "test.job", payload: {} };
+      const job = await service.enqueue(payload);
+      (service as any).updateJobStatus(job.id, JobStatus.DEAD_LETTER);
+      const cancelled = await service.cancelJob(job.id);
+      expect(cancelled).toBe(false);
+    });
+
+    it("should set cancelRequested for an active job without changing status", async () => {
+      const payload = { type: "test.job", payload: {} };
+      const job = await service.enqueue(payload);
+      (service as any).updateJobStatus(job.id, JobStatus.ACTIVE);
+
+      const cancelled = await service.cancelJob(job.id);
+      expect(cancelled).toBe(true);
+      const updated = await service.getJob(job.id);
+      expect(updated?.cancelRequested).toBe(true);
+      expect(updated?.status).toBe(JobStatus.ACTIVE);
+    });
+
+    it("acknowledgeCancel transitions active job to CANCELLED", async () => {
+      const payload = { type: "test.job", payload: {} };
+      const job = await service.enqueue(payload);
+      (service as any).updateJobStatus(job.id, JobStatus.ACTIVE);
+      await service.cancelJob(job.id);
+      await service.acknowledgeCancel(job.id);
+      const updated = await service.getJob(job.id);
+      expect(updated?.status).toBe(JobStatus.CANCELLED);
+      expect(updated?.cancelledAt).toBeDefined();
+    });
+
+    it("runs cleanup handler after cancellation", async () => {
+      const cleanup = jest.fn().mockResolvedValue(undefined);
+      service.registerCleanupHandler("cleanup.job", cleanup);
+      const job = await service.enqueue({ type: "cleanup.job", payload: {} });
+      await service.cancelJob(job.id);
+      expect(cleanup).toHaveBeenCalledWith(expect.objectContaining({ id: job.id, type: "cleanup.job" }));
+    });
+
+    it("returns false for a non-existent job id", async () => {
+      const cancelled = await service.cancelJob("does-not-exist");
       expect(cancelled).toBe(false);
     });
   });
