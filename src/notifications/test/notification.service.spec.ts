@@ -17,6 +17,7 @@ import { NotificationDeliveryLog } from '../entities/notification-delivery-log.e
 import { SendNotificationDto } from '../dto/send-notification.dto';
 import { QueryNotificationHistoryDto } from '../dto/query-notification.dto';
 import { CursorPaginationService } from '../../common/pagination/cursor-pagination.service';
+import { NotificationDeduplicationService } from '../services/notification-deduplication.service';
 
 describe('NotificationService', () => {
   let service: NotificationService;
@@ -96,6 +97,40 @@ describe('NotificationService', () => {
         { provide: NotificationQueueService, useValue: mockQueueService },
         { provide: EventEmitter2, useValue: mockEventEmitter },
         CursorPaginationService,
+        {
+          provide: NotificationDeduplicationService,
+          useValue: {
+            findDuplicate: jest.fn().mockImplementation(async (userId: string, deduplicationKey: string) => {
+              const existing = await mockNotificationRepo.findOne({
+                where: { userId, deduplicationKey, deleted: false },
+              });
+              if (existing) {
+                return {
+                  duplicate: existing,
+                  receipt: {
+                    receiptId: `rcpt-${existing.id}`,
+                    notificationId: existing.id,
+                    userId,
+                    isDuplicate: true,
+                    deliveryStatus: "DELIVERED",
+                  },
+                };
+              }
+              return null;
+            }),
+            generateReceipt: jest.fn().mockImplementation((n) =>
+              Promise.resolve({
+                receiptId: `rcpt-${n.id}`,
+                notificationId: n.id,
+                userId: n.userId,
+                deliveryStatus: "PENDING",
+                isDuplicate: false,
+              }),
+            ),
+            getReceiptByNotificationId: jest.fn(),
+            getReceiptByDeduplicationKey: jest.fn(),
+          },
+        },
       ],
     }).compile();
 

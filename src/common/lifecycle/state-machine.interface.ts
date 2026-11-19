@@ -31,6 +31,7 @@ export interface StateMetadata<TState extends string> {
   description: string;
   isTerminal: boolean;
   isLocked?: boolean; // When true, mutating operations on the record are disallowed
+  [key: string]: any;
 }
 
 export interface StateMachineDefinition<TState extends string, TContext = TransitionContext> {

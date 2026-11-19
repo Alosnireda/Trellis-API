@@ -6,6 +6,7 @@ import { ConfigService } from "@nestjs/config";
 import { logger } from "./config/logger";
 import { GlobalExceptionFilter } from "./common/filters/global-exception.filter";
 import { SanitizePipe } from "./common/pipes/sanitize.pipe";
+import { InputLimitsPipe } from "./common/pipes/input-limits.pipe";
 import { createGlobalValidationPipe } from "./common/pipes/validation.pipe";
 import { createCorsConfig } from "./config/cors.config";
 import { createHelmetConfig } from "./config/helmet.config";
@@ -107,6 +108,8 @@ async function bootstrap() {
     defaultVersion: "1",
   });
   app.useGlobalPipes(
+    // Enforce strict size and cardinality limits first to protect against recursion and memory exhaustion
+    new InputLimitsPipe(),
     // Sanitize first to strip XSS payloads before validation
     new SanitizePipe(),
     createGlobalValidationPipe(),
