@@ -73,7 +73,47 @@ export class NotificationController {
   @ApiResponse({ status: 201, description: 'Notification sent successfully' })
   async sendNotification(@Body() dto: SendNotificationDto) {
     const notification = await this.notificationService.send(dto);
-    return { success: true, notification };
+    const receipt = (notification as any).receipt;
+    return { success: true, notification, receipt };
+  }
+
+  @Get(':notificationId/receipt')
+  @ApiOperation({ summary: 'Get delivery receipt for a notification' })
+  @ApiParam({ name: 'notificationId', description: 'Notification ID' })
+  @ApiResponse({ status: 200, description: 'Delivery receipt' })
+  async getReceipt(
+    @Request() req,
+    @Param('notificationId') notificationId: string,
+  ) {
+    const userId = req?.user?.id;
+    const isAdmin = Boolean(
+      req?.user?.roles?.includes('ADMIN') || req?.user?.roles?.includes('admin'),
+    );
+    const receipt = await this.notificationService.getDeliveryReceipt(
+      notificationId,
+      userId,
+      isAdmin,
+    );
+    return { success: true, receipt };
+  }
+
+  @Get('receipts/by-key/:deduplicationKey')
+  @ApiOperation({ summary: 'Get delivery receipt by deduplication key' })
+  @ApiParam({ name: 'deduplicationKey', description: 'Deduplication key' })
+  @ApiResponse({ status: 200, description: 'Delivery receipt' })
+  async getReceiptByDeduplicationKey(
+    @Request() req,
+    @Param('deduplicationKey') deduplicationKey: string,
+  ) {
+    const userId = req?.user?.id;
+    if (!userId) {
+      throw new ForbiddenException('User authentication required to lookup receipt by key');
+    }
+    const receipt = await this.notificationService.getDeliveryReceiptByKey(
+      userId,
+      deduplicationKey,
+    );
+    return { success: true, receipt };
   }
 
   @Post('send-bulk')
