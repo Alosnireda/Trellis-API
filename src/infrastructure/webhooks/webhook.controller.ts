@@ -56,8 +56,7 @@ export class WebhookController {
     description: "Subscription created with signing key",
   })
   async createSubscription(@Body() dto: CreateWebhookSubscriptionDto) {
-    // TODO: extract userId from auth guard
-    const userId = "system";
+    const userId = request.user?.id ?? "system";
     const sub = await this.subscriptionService.create(userId, dto);
     return {
       success: true,
@@ -133,8 +132,9 @@ export class WebhookController {
   async toggleStatus(
     @Param("id") id: string,
     @Query("status") status: "active" | "paused" | "disabled",
+    @Req() request: RawBodyRequest<Request>,
   ) {
-    const userId = "system";
+    const userId = request.user?.id ?? "system";
     const sub = await this.subscriptionService.toggleStatus(
       id,
       userId,
@@ -164,11 +164,21 @@ export class WebhookController {
     @Param("subscriptionId", new ParseUUIDPipe()) subscriptionId: string,
     @Req() request: RawBodyRequest<Request>,
   ) {
-    return this.inboundService.accept(
-      subscriptionId,
-      request.rawBody,
-      request.headers,
-    );
+    try {
+      return this.inboundService.accept(
+        subscriptionId,
+        request.rawBody,
+        request.headers,
+      );
+    } catch (error) {
+      this.logger.error(
+        `Failed to process inbound webhook for subscription ${subscriptionId}`,
+        error.message,
+      );
+      throw new BadRequestException(
+        "Malformed or invalidly signed webhook event",
+      );
+    }
   }
 
   @Post("events")
