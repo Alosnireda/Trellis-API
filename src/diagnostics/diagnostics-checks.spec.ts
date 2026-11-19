@@ -530,3 +530,143 @@ describe("checkPortAvailable", () => {
     expect(result.status).toBe("warn");
   });
 });
+
+// ──────────────────────────────────────────────────────────────────────────────
+// Contributor Diagnostics Path Verification (Normal, Failure, Retry, Authorization)
+// ──────────────────────────────────────────────────────────────────────────────
+describe("Contributor Diagnostics Comprehensive Paths", () => {
+  describe("Normal Path", () => {
+    it("reports an all-green report when the local development environment is fully compliant", async () => {
+      const checks: DiagnosticCheck[] = [
+        ...checkEnvVars({
+          DATABASE_URL: "postgresql://postgres:secret123@localhost:5432/trellis_dev",
+          JWT_SECRET: "9f8e7d6c5b4a3f2e1d0c9b8a7f6e5d4c3b2a1f0e9d8c7b6a5f4e3d2c1b0a9f8e",
+          REDIS_URL: "redis://localhost:6379",
+        }),
+        checkToolVersion({ name: "node", version: "v20.10.0", minMajor: 18, required: true, remediation: "upgrade" }),
+        checkToolVersion({ name: "git", version: "2.44.0", required: true, remediation: "install git" }),
+        await checkPortAvailable("env:PORT", 3001, async () => true),
+        checkSecretEntropy("JWT_SECRET", "9f8e7d6c5b4a3f2e1d0c9b8a7f6e5d4c3b2a1f0e9d8c7b6a5f4e3d2c1b0a9f8e"),
+        checkDirectoryPermissions("fs:workspace-write", "/workspaces/trellis", () => true),
+        checkDatabaseAuth({ connected: true, authenticated: true }),
+        checkBootstrapAdmin("admin@trellis.dev", undefined, "ADMIN"),
+      ];
+
+      const report = buildReport(checks);
+      expect(report.ok).toBe(true);
+      expect(report.failed).toBe(0);
+      expect(report.passed).toBeGreaterThanOrEqual(8);
+      expect(checks.every((c) => c.status === "pass")).toBe(true);
+    });
+  });
+
+  describe("Failure Path", () => {
+    it("catches blocking setup failures and returns distinct actionable remediation for each", async () => {
+      const missingEnv = checkEnvVars({
+        DATABASE_URL: "",
+        JWT_SECRET: "your_jwt_secret_here",
+      });
+      const dbCheck = missingEnv.find((c) => c.name === "env:DATABASE_URL");
+      expect(dbCheck?.status).toBe("fail");
+      expect(dbCheck?.remediation).toContain("DATABASE_URL=postgresql://");
+
+      const portCheck = await checkPortAvailable("env:PORT", 3001, async () => false);
+      expect(portCheck.status).toBe("fail");
+      expect(portCheck.remediation).toContain("lsof -i :3001");
+
+      const entropyCheck = checkSecretEntropy("JWT_SECRET", "short_weak");
+      expect(entropyCheck.status).toBe("fail");
+      expect(entropyCheck.remediation).toContain("randomBytes(32)");
+
+      const permCheck = checkDirectoryPermissions("fs:workspace-write", "/workspaces/trellis", () => false);
+      expect(permCheck.status).toBe("fail");
+      expect(permCheck.remediation).toContain("chmod -R u+rwX");
+
+      const authCheck = checkDatabaseAuth({ connected: false, authenticated: false, errorCategory: "auth_failed" });
+      expect(authCheck.status).toBe("fail");
+      expect(authCheck.remediation).toContain("Verify username and password in DATABASE_URL");
+
+      const report = buildReport([...missingEnv, portCheck, entropyCheck, permCheck, authCheck]);
+      expect(report.ok).toBe(false);
+      expect(report.failed).toBeGreaterThanOrEqual(4);
+    });
+  });
+
+  describe("Retry Path", () => {
+    it("retries transient TCP and HTTP network probes with backoff and reports success details", async () => {
+      let tcpAttempts = 0;
+      const tcpProbe = jest.fn().mockImplementation(async () => {
+        tcpAttempts += 1;
+        return tcpAttempts >= 2;
+      });
+
+      const tcpResult = await checkTcpConnectivityWithRetry(
+        "tcp:postgres",
+        "localhost",
+        5432,
+        tcpProbe,
+        "Start Postgres",
+        { maxAttempts: 3, backoffMs: 5 },
+      );
+      expect(tcpResult.status).toBe("pass");
+      expect(tcpResult.attempts).toBe(2);
+      expect(tcpResult.detail).toContain("succeeded on retry attempt 2");
+
+      let httpAttempts = 0;
+      const httpProbe = jest.fn().mockImplementation(async () => {
+        httpAttempts += 1;
+        return httpAttempts >= 2 ? { ok: true, status: 200 } : { ok: false, status: 504 };
+      });
+
+      const httpResult = await checkHttpEndpointWithRetry(
+        "http:horizon",
+        "https://horizon-testnet.stellar.org",
+        httpProbe,
+        "Check network",
+        { maxAttempts: 3, backoffMs: 5 },
+      );
+      expect(httpResult.status).toBe("pass");
+      expect(httpResult.attempts).toBe(2);
+      expect(httpResult.detail).toContain("succeeded on retry attempt 2");
+    });
+  });
+
+  describe("Authorization Path", () => {
+    it("distinguishes bad credentials from database missing without leaking secrets", () => {
+      const authFailed = checkDatabaseAuth({
+        connected: false,
+        authenticated: false,
+        errorCategory: "auth_failed",
+      });
+      expect(authFailed.status).toBe("fail");
+      expect(authFailed.detail).toMatch(/authentication failed|username\/password/i);
+      expect(authFailed.remediation).toContain("Verify username and password in DATABASE_URL");
+
+      // Verify no sensitive tokens or passwords leaked
+      expect(authFailed.detail).not.toContain("password123");
+      expect(authFailed.remediation).not.toContain("password123");
+    });
+
+    it("verifies bootstrap admin authorization without altering account roles", () => {
+      const unpromoted = checkBootstrapAdmin("maintainer@trellis.dev", undefined, "USER");
+      expect(unpromoted.status).toBe("warn");
+      expect(unpromoted.detail).toMatch(/not yet an ADMIN/i);
+      expect(unpromoted.remediation).toMatch(/restart the API/i);
+
+      const promoted = checkBootstrapAdmin("maintainer@trellis.dev", undefined, "ADMIN");
+      expect(promoted.status).toBe("pass");
+      expect(promoted.detail).toMatch(/has ADMIN role/i);
+    });
+
+    it("ensures environment drift warnings never expose secret values", () => {
+      const template = "DATABASE_URL=postgres://...\nJWT_SECRET=secret\nREDIS_URL=redis://...\n";
+      const actual = "DATABASE_URL=postgres://user:super_secret_pw@prod.db:5432/main\n";
+
+      const drift = checkEnvTemplateDrift(template, actual);
+      expect(drift.status).toBe("warn");
+      expect(drift.detail).toContain("JWT_SECRET");
+      expect(drift.detail).toContain("REDIS_URL");
+      expect(drift.detail).not.toContain("super_secret_pw");
+    });
+  });
+});

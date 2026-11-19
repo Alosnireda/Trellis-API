@@ -156,7 +156,7 @@ describe("KycGuard", () => {
   describe("@SkipKyc() audit logging", () => {
     it("emits a KYC_BYPASS_ACCESSED event with user and path context", async () => {
       const sensitiveActionLogger = {
-        record: jest.fn().mockResolved(undefined),
+        record: jest.fn().mockResolvedValue(undefined),
       };
       const guard = await makeGuard({ skipKyc: true, sensitiveActionLogger });
 
@@ -186,7 +186,7 @@ describe("KycGuard", () => {
 
     it("records a null userId for anonymous bypass access", async () => {
       const sensitiveActionLogger = {
-        record: jest.fn().mockResolved(undefined),
+        record: jest.fn().mockResolvedValue(undefined),
       };
       const guard = await makeGuard({ skipKyc: true, sensitiveActionLogger });
 
@@ -210,7 +210,7 @@ describe("KycGuard", () => {
 
     it("does not emit an audit event for non-SkipKyc routes", async () => {
       const sensitiveActionLogger = {
-        record: jest.fn().mockResolved(undefined),
+        record: jest.fn().mockResolvedValue(undefined),
       };
       const guard = await makeGuard({ sensitiveActionLogger });
 
@@ -226,7 +226,7 @@ describe("KycGuard", () => {
 
     it("still allows the request when the audit sink fails", async () => {
       const sensitiveActionLogger = {
-        record: jest.fn().mockRejected(new Error("db down")),
+        record: jest.fn().mockRejectedValue(new Error("db down")),
       };
       const guard = await makeGuard({ skipKyc: true, sensitiveActionLogger });
 

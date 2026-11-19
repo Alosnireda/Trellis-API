@@ -258,4 +258,82 @@ describe("IdempotencyService concurrency (harness)", () => {
     expect(isUniqueViolation(null)).toBe(false);
     expect(isUniqueViolation("23505")).toBe(false);
   });
+
+  describe("Authorization & Failure Paths", () => {
+    it("strictly isolates identical idempotency keys across different actors (scope authorization)", async () => {
+      const { service, repo } = buildService();
+      let aliceCalls = 0;
+      let bobCalls = 0;
+
+      const report = await runConcurrently(["user-alice", "user-bob"], async (actor) => {
+        if (actor === "user-alice") {
+          return service.execute({
+            key: "shared-key-123",
+            scope: "POST:/transfers:user-alice",
+            requestHash: "hash-alice",
+            handler: async () => {
+              aliceCalls += 1;
+              return { statusCode: 200, body: { txId: "tx-alice" } };
+            },
+          });
+        } else {
+          return service.execute({
+            key: "shared-key-123",
+            scope: "POST:/transfers:user-bob",
+            requestHash: "hash-bob",
+            handler: async () => {
+              bobCalls += 1;
+              return { statusCode: 200, body: { txId: "tx-bob" } };
+            },
+          });
+        }
+      });
+
+      expectSuccessCount(report, 2);
+      expect(aliceCalls).toBe(1);
+      expect(bobCalls).toBe(1);
+      expect(repo.rows).toHaveLength(2);
+
+      const aliceSuccess = report.successes.find((s) => s.actor === "user-alice");
+      const bobSuccess = report.successes.find((s) => s.actor === "user-bob");
+      expect(aliceSuccess?.value?.body).toEqual({ txId: "tx-alice" });
+      expect(bobSuccess?.value?.body).toEqual({ txId: "tx-bob" });
+    });
+
+    it("cleans up in-progress record when handler fails so subsequent retries can succeed", async () => {
+      const { service, repo } = buildService();
+      let attempts = 0;
+
+      const failingHandler = async () => {
+        attempts += 1;
+        if (attempts === 1) throw new Error("Downstream gateway timeout");
+        return { statusCode: 200, body: { recovered: true } };
+      };
+
+      // First execution fails
+      await expect(
+        service.execute({
+          key: "fail-retry-key",
+          scope: SCOPE,
+          requestHash: "hash-fail",
+          handler: failingHandler,
+        }),
+      ).rejects.toThrow("Downstream gateway timeout");
+
+      // Verify in_progress record was removed on failure
+      expect(repo.rows).toHaveLength(0);
+
+      // Retry execution now succeeds
+      const retryResult = await service.execute({
+        key: "fail-retry-key",
+        scope: SCOPE,
+        requestHash: "hash-fail",
+        handler: failingHandler,
+      });
+
+      expect(retryResult.body).toEqual({ recovered: true });
+      expect(retryResult.replayed).toBe(false);
+      expect(attempts).toBe(2);
+    });
+  });
 });
