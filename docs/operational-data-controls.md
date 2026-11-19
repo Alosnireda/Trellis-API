@@ -21,6 +21,42 @@ Administrators can request `GET /monitoring/operational-health` with the normal 
 
 Audit logs are retained for seven years. `previewRetention()` reports candidate IDs before deletion; the scheduled cleanup deletes only eligible records. Records with `retentionHold`, `activeDisputeId`, `auditCaseId`, or `settlementId` metadata are protected until the associated matter is resolved. Audit exports remain signed and are not deleted by this job. Cleanup failure leaves source rows in place; operators can rerun the job after restoring database access. For rollback, disable the scheduled audit-retention job in deployment configuration and restore a database backup if an approved deletion removed records unexpectedly. Do not extend retention by changing the cutoff without a compliance review.
 
+### Retention Enforcement API & Operational Paths
+
+Compliance officers can query and trigger retention workflows on demand via the API:
+
+```http
+# Read-only preview of eligible vs protected audit records
+GET /audit-logs/retention/preview
+Authorization: Bearer <COMPLIANCE_OFFICER_TOKEN>
+
+# Manual execution of retention cleanup
+POST /audit-logs/retention/enforce
+Authorization: Bearer <COMPLIANCE_OFFICER_TOKEN>
+```
+
+#### Operational Path Guarantees
+1. **Normal Path**:
+   - The scheduled job runs daily at 3:00 AM UTC (`@Cron(CronExpression.EVERY_DAY_AT_3AM)`) under distributed lock `audit:enforce-retention` (30m TTL).
+   - Records older than 7 years (`RETENTION_YEARS = 7`) without active holds are selected and permanently deleted using `repo.remove()`.
+   - Records containing active legal/dispute holds (`retentionHold: true`, `activeDisputeId`, `auditCaseId`, or `settlementId`) are strictly preserved.
+   - `GET /audit-logs/retention/preview` returns `{ cutoff, scanned, eligible, protected, affectedIds, protectedIds }` with zero deletions.
+2. **Failure Path**:
+   - If `repo.remove()` or the database fails, the transaction aborts cleanly without partial writes. Protected rows are never deleted.
+   - Malformed metadata (null, non-object, missing keys) fails safe: records without active hold keys are eligible for deletion, and malformed entries never crash the retention scanner.
+3. **Retry Path**:
+   - Retention enforcement is completely idempotent: if an execution fails midway, rerunning `enforceRetention()` picks up remaining eligible records.
+   - Running retention back-to-back produces `{ scanned: N, eligible: 0, protected: P, affectedIds: [] }` on the second run.
+   - Distributed lock ensures cluster nodes do not run concurrent retention tasks.
+4. **Authorization Path**:
+   - Guarded by `JwtAuthGuard` and `ComplianceOfficerGuard`.
+   - Access is restricted to `Role.ADMIN` and `Role.KYC_OPERATOR` (compliance officers).
+   - Standard users and operators receive 403 Forbidden; unauthenticated callers receive 401 Unauthorized.
+5. **Rollback & Edge-Case Recovery**:
+   - **Emergency Hold**: If records must be urgently protected from purge, apply an active dispute ID or set `retentionHold: true` in metadata via evidence bundle generation.
+   - **Hold Release**: When a dispute, settlement, or case is closed, the hold flag is removed, allowing the record to become eligible during the next scheduled run.
+   - **Accidental Deletion Rollback**: If records were deleted in error, disable the scheduled retention cron in deployment configuration and restore the affected partition from the point-in-time PostgreSQL backup. Signed audit exports remain immutable in object storage and are never deleted by this job.
+
 ## Stable lists
 
 Audit-log and review connections use opaque descending keyset cursors ordered by `(createdAt, id)`. Filters are applied before the cursor predicate, so hidden or restricted records cannot change the visible ordering. The legacy page parameters remain available for compatibility.
