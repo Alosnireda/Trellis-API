@@ -49,6 +49,7 @@ export const SENSITIVE_ACTION_LOGGER = "KYC_SENSITIVE_ACTION_LOGGER_TOKEN";
 
 /** Audit event name recorded when a `@SkipKyc()` route is accessed. */
 export const KYC_BYPASS_EVENT = "KYC_BYPASS_ACCESSED";
+export const KYC_BYPASS_ACCESSED_EVENT = KYC_BYPASS_EVENT;
 
 /** Default maximum AML risk score tolerated on a 0-100 scale. */
 export const DEFAULT_MAX_AML_RISK_SCORE = 80;
@@ -97,8 +98,10 @@ export interface AmlRiskService {
 /** Structured payload written to the `SensitiveActionEvent` table. */
 export interface SensitiveActionEventPayload {
   event: typeof KYC_BYPASS_EVENT;
+  eventType?: typeof KYC_BYPASS_EVENT;
   userId: string | null;
   ipAddress: string;
+  clientIp?: string;
   path: string;
   method: string;
   timestamp: Date;
@@ -237,8 +240,10 @@ export class KycGuard implements CanActivate {
 
     const payload: SensitiveActionEventPayload = {
       event: KYC_BYPASS_EVENT,
+      eventType: KYC_BYPASS_EVENT,
       userId,
       ipAddress,
+      clientIp: ipAddress,
       path,
       method: request?.method ?? "unknown",
       timestamp: new Date(),
@@ -403,11 +408,3 @@ export class KycGuard implements CanActivate {
     return geoCookie ? geoCookie.slice("geo=".length) : null;
   }
 }
-
-/** Headers a trusted reverse proxy may use to publish the client country. */
-const PROXY_COUNTRY_HEADERS = [
-  "cf-ipcountry",
-  "x-vercel-ip-country",
-  "x-geo-country",
-  "x-country-code",
-] as const;

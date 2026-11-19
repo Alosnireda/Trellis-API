@@ -249,9 +249,7 @@ export class AuditLogService {
   // Permanently deletes unprotected logs past the 7-year retention period.
   @Cron(CronExpression.EVERY_DAY_AT_3AM)
   @DistributedLock("audit:enforce-retention", 30 * 60_000)
-  async enforceRetention(): Promise<RetentionReport> {
-    const cutoff = new Date();
-    cutoff.setFullYear(cutoff.getFullYear() - RETENTION_YEARS);
+  async enforceRetention(cutoff = this.retentionCutoff()): Promise<RetentionReport> {
     const candidates = await this.repo.find({ where: { createdAt: LessThan(cutoff) } });
     const protectedRecords = candidates.filter((record) => this.isProtected(record));
     const eligibleRecords = candidates.filter((record) => !this.isProtected(record));
@@ -289,7 +287,8 @@ export class AuditLogService {
   }
 
   private isProtected(record: AuditLog): boolean {
-    const metadata = record.metadata ?? {};
+    const metadata = record?.metadata;
+    if (!metadata || typeof metadata !== "object") return false;
     return Boolean(metadata.retentionHold || metadata.activeDisputeId || metadata.auditCaseId || metadata.settlementId);
   }
 }

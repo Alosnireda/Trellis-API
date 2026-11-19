@@ -1,6 +1,7 @@
 import {
   Controller,
   Get,
+  Post,
   Param,
   Query,
   UseGuards,
@@ -43,6 +44,29 @@ export class AuditLogController {
     @Query() query: QueryAuditLogDto,
   ): Promise<AuditLogListResponseDto> {
     return this.auditLogService.query(query);
+  }
+
+  @Get("retention/preview")
+  @ApiOperation({
+    summary: "Preview eligible and protected records for audit retention purge",
+    description: "Read-only preview reporting candidate record counts and IDs before deletion.",
+  })
+  @ApiResponse({ status: 200, description: "Retention preview report" })
+  @ApiResponse({ status: 403, description: "Forbidden - Compliance Officer required" })
+  async previewRetention() {
+    return this.auditLogService.previewRetention();
+  }
+
+  @Post("retention/enforce")
+  @ApiOperation({
+    summary: "Manually trigger retention enforcement for expired audit records",
+    description:
+      "Permanently purges unprotected audit logs older than retention cutoff (7 years). Protected records with active holds/disputes are preserved.",
+  })
+  @ApiResponse({ status: 200, description: "Retention enforcement report" })
+  @ApiResponse({ status: 403, description: "Forbidden - Compliance Officer required" })
+  async enforceRetention() {
+    return this.auditLogService.enforceRetention();
   }
 
   @Get(":id")

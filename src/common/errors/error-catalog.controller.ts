@@ -51,7 +51,7 @@ export class ErrorCatalogController {
   @ApiResponse({ status: 200, description: "Remediation hint for error code" })
   @ApiResponse({ status: 404, description: "Error code not found in catalog" })
   getErrorHint(@Param("code") code: string): ErrorCatalogItem {
-    const errorCode = code.toUpperCase() as ErrorCode;
+    const errorCode = (code || "").trim().toUpperCase() as ErrorCode;
     const hint = REMEDIATION_HINTS[errorCode];
     if (!hint) {
       throw new NotFoundException(`Error code '${code}' not found in catalog.`);
