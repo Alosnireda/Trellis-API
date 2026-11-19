@@ -50,7 +50,6 @@ describe("Portfolio Management REST API", () => {
   });
 
   it("POST /api/portfolio (201) - create portfolio", async () => {
-    // TODO: replace with a valid token.
     const token = "REPLACE_WITH_JWT";
 
     const res = await request(app.getHttpServer())
