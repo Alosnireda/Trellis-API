@@ -141,3 +141,31 @@ the normal deployment process; there is no data rollback. Consumers should
 continue to tolerate unknown JSON members and may fall back to
 `statusCode`/`errorCode`/`message` when talking to an older server. Do not
 remove or rename legacy fields without a separately versioned contract change.
+
+---
+
+## 6. Live Error Catalog Endpoints and Remediation API
+
+Developers, SDK generators, and automated client agents can query the live catalog at runtime to discover stable error codes, taxonomy metadata, and remediation hints:
+
+### Endpoints
+- **`GET /errors/catalog`**: Returns `{ total: number, catalog: ErrorCatalogItem[] }` covering every stable `ErrorCode`.
+- **`GET /errors/catalog/:code`**: Returns `ErrorCatalogItem` for a specific code (case-insensitive, trims whitespace). Returns HTTP 404 (`NOT_FOUND`) if the code is unknown.
+
+### Path Behaviors & Guarantees
+1. **Normal Path**:
+   - `GET /errors/catalog` returns 200 with the full array of error items, including machine-readable `code`, `domain`, `retryable`, `retryStrategy`, and structured `remediationHint` (`action`, `steps`, `docUrl`).
+   - `GET /errors/catalog/SETTLEMENT_TIMEOUT` returns the specific item with recovery guidance.
+2. **Failure Path**:
+   - `GET /errors/catalog/UNKNOWN_CODE` returns 404 with a structured `NotFoundException` detail message.
+   - Malformed or blank strings return 404.
+3. **Retry Path**:
+   - Retryable codes (`RATE_LIMITED`, `SERVICE_UNAVAILABLE`, `SETTLEMENT_TIMEOUT`, `DEPENDENCY_TIMEOUT`, `HORIZON_TIMEOUT`, `STELLAR_NETWORK_ERROR`) return `retryable: true`, a positive `retryAfterSeconds`, and exponential backoff steps.
+   - Terminal codes (`VALIDATION_ERROR`, `MALFORMED_PAYLOAD`, `INVALID_PARAMETER`, `UNAUTHORIZED`, `FORBIDDEN`) return `retryable: false` and `retryStrategy: "none"` to instruct clients and automated agents to halt retries immediately and avoid retry storms.
+4. **Authorization Path**:
+   - `ErrorCatalogController` is decorated with `@Public()` and `@SkipKyc()`, guaranteeing public unauthenticated access so onboarding clients or unauthenticated agents can always look up remediation steps.
+   - When requests to protected API endpoints fail authorization (`UNAUTHORIZED` 401 or `FORBIDDEN` 403), the response provides remediation hints instructing the user on bearer token presentation or role elevation via `/permissions/my-permissions`.
+5. **Contract Preservation & Rollback**:
+   - The catalog controller is entirely additive and read-only.
+   - No database migrations or schema updates are required.
+   - In case of deployment issues, rolling back the application binary restores previous behavior with zero data loss or database rollback.
