@@ -13,6 +13,22 @@ For a faster pass that skips slow external network, build, audit, and test
 checks, use `npm run diagnostics:quick`. PostgreSQL and Redis connectivity are
 still checked in quick mode when their URLs are configured.
 
+## Options
+
+| Flag | Effect |
+| --- | --- |
+| `--quick` | Skip slow network, build, audit, and test checks. |
+| `--json` | Print only a machine-readable report on stdout (`ok`, `summary`, `checks[]`). Connection-string passwords and `password=`/`token=` style values are redacted. Exit codes are unchanged, so CI can gate on them. |
+| `--only=<a,b>` | Run only the named sections: `tools`, `deps`, `env`, `db`, `redis`, `stellar`, `smtp`, `build`, `tests`. |
+| `-h`, `--help` | Show usage. |
+
+An unknown flag or section prints the usage and exits `2` before any check runs.
+The logic lives in `src/diagnostics/diagnostics-report.ts` and is unit-tested.
+
+```bash
+npm run diagnostics -- --only=env,db --json
+```
+
 ## What it checks
 
 - Required tools, installed key Node packages, TypeScript, and a focused set of
