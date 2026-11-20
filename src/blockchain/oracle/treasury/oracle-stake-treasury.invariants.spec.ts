@@ -170,7 +170,7 @@ describe("oracle stake treasury conservation invariants (#335)", () => {
       ledger.apply("2", event("slashed", { submitter: s, penalty_amount: "100", remaining_stake: "900", reason: "stale" }));
       ledger.apply("3", event("unbond", { submitter: s, amount: "400", unlock_time: "9" }));
       ledger.apply("4", event("withdrawn", { submitter: s, amount: "250" }));
-      expect(ledger.snapshot()).toEqual<TreasurySnapshot>({
+      const expected: TreasurySnapshot = {
         deposited: 1000n,
         withdrawn: 250n,
         treasury: 100n,
@@ -178,7 +178,8 @@ describe("oracle stake treasury conservation invariants (#335)", () => {
         unbonding: 150n,
         appliedEvents: 4,
         accounts: [{ submitter: s, bonded: 500n, unbonding: 150n }],
-      });
+      };
+      expect(ledger.snapshot()).toEqual(expected);
       expect(ledger.checkInvariants()).toEqual([]);
     });
 

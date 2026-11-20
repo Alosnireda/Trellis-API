@@ -138,7 +138,7 @@ describe("authorization fingerprint (#336)", () => {
     );
   });
 
-  it.each<[string, Partial<AuthorizationEnvelope>]>([
+  it.each([
     ["chain", { domain: { ...base.domain, chainId: 2 } }],
     ["contract", { domain: { ...base.domain, verifyingContract: "0x" + "ef".repeat(20) } }],
     ["domain version", { domain: { ...base.domain, version: "2" } }],
@@ -147,18 +147,18 @@ describe("authorization fingerprint (#336)", () => {
     ["payload hash", { payloadHash: "0x" + "12".repeat(32) }],
     ["nonce", { nonce: "8" }],
     ["expiry", { expiresAt: NOW_S + 61 }],
-  ])("changes when the %s changes (no cross-context replay)", (_label, change) => {
+  ] as Array<[string, Partial<AuthorizationEnvelope>]>)("changes when the %s changes (no cross-context replay)", (_label, change) => {
     expect(authorizationFingerprint({ ...base, ...change })).not.toBe(authorizationFingerprint(base));
   });
 
-  it.each<[string, Partial<AuthorizationEnvelope>]>([
+  it.each([
     ["non-canonical nonce", { nonce: "07" }],
     ["negative nonce", { nonce: -1 }],
     ["fractional expiry", { expiresAt: 1.5 }],
     ["short hash", { payloadHash: "0x1234" }],
     ["malformed signer", { signer: "not-an-address" }],
     ["blank payload type", { payloadType: " " }],
-  ])("rejects input with a %s", (_label, change) => {
+  ] as Array<[string, Partial<AuthorizationEnvelope>]>)("rejects input with a %s", (_label, change) => {
     expect(() => authorizationFingerprint({ ...base, ...change })).toThrow();
   });
 });
@@ -200,7 +200,7 @@ describe("AuthorizationReplayGuard (#336)", () => {
 
   beforeEach(() => {
     signing = new TestOracleSigner();
-    wallet = Wallet.createRandom();
+    wallet = new Wallet(Wallet.createRandom().privateKey);
     store = new InMemoryReplayRecordStore();
     clock = NOW_MS;
     guard = guardFor(data);
@@ -245,7 +245,7 @@ describe("AuthorizationReplayGuard (#336)", () => {
     it("never records anything for an invalid signature, so forgeries cannot burn a real one", async () => {
       const { envelope, signature } = await signed();
       const forged = await signing.sign(
-        Wallet.createRandom(),
+        new Wallet(Wallet.createRandom().privateKey),
         "price_feed",
         envelope.payloadHash,
         "1",
