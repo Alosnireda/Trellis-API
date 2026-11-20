@@ -1,0 +1,20 @@
+{
+  "id": "webhook-idempotency-violation",
+  "category": "replay",
+  "target": "webhooks.inbound",
+  "description": "Webhook delivered twice with same idempotency key within retry window",
+  "input": {
+    "provider": "stripe",
+    "headers": {
+      "stripe-signature": "t=1800000000,v1=corpus_signature",
+      "idempotency-key": "idem-key-duplicate"
+    },
+    "rawBody": "{\"id\":\"evt_duplicate\",\"type\":\"charge.succeeded\",\"data\":{\"object\":{\"id\":\"ch_123\",\"amount\":5000}}}",
+    "timestamp": 1800000000,
+    "nowSeconds": 1800000005
+  },
+  "expected": {
+    "accepted": false,
+    "reason": "Duplicate idempotency key within retry window"
+  }
+}

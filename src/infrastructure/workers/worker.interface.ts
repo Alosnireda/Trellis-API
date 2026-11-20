@@ -15,7 +15,15 @@ export enum JobStatus {
   FAILED = "failed",
   DELAYED = "delayed",
   DEAD_LETTER = "dead_letter",
+  CANCELLED = "cancelled",
 }
+
+/** Terminal statuses — a job in one of these states cannot be retried or cancelled. */
+export const TERMINAL_STATUSES = new Set<JobStatus>([
+  JobStatus.COMPLETED,
+  JobStatus.DEAD_LETTER,
+  JobStatus.CANCELLED,
+]);
 
 export enum JobPriority {
   LOW = "low",
@@ -39,11 +47,17 @@ export interface WorkerJob<T = any> {
   completedAt?: Date;
   failedAt?: Date;
   deadLetteredAt?: Date;
+  cancelledAt?: Date;
   error?: string;
   result?: any;
   correlationId?: string;
   schemaVersion: string;
+  /** Set to true by an operator cancel request; checked by running workers. */
+  cancelRequested?: boolean;
 }
+
+/** A cleanup hook registered for a job type. Called after cancellation is confirmed. */
+export type JobCleanupFn<T = any> = (job: WorkerJob<T>) => Promise<void>;
 
 export interface RetryPolicy {
   maxAttempts: number;
