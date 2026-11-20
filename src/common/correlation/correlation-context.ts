@@ -1,5 +1,5 @@
 import { AsyncLocalStorage } from "node:async_hooks";
-import { randomUUID } from "crypto";
+import { createHash, randomUUID } from "crypto";
 
 /*
  * Request correlation across the API, background workers and external calls
@@ -58,6 +58,20 @@ export function normalizeCorrelationId(raw: unknown): string | null {
 
 export function generateCorrelationId(): string {
   return randomUUID();
+}
+
+export function deriveContractCorrelationId(
+  contractId: string,
+  rootCorrelationId: string | undefined = getCorrelationId(),
+): string | null {
+  const root = normalizeCorrelationId(rootCorrelationId);
+  const contract = normalizeCorrelationId(contractId);
+  if (!root || !contract) return null;
+  const digest = createHash("sha256")
+    .update(`${root}:${contract}`)
+    .digest("hex")
+    .slice(0, 32);
+  return `c-${digest}`;
 }
 
 /**

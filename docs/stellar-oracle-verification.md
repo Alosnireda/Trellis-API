@@ -46,6 +46,17 @@ starts polling. A failed step rolls back to stopped and records `failedStep`,
 `retryable` and a verified `rolledBack` flag in `GET /oracle/submissions/verifier`;
 retry with `POST /oracle/submissions/verifier/start` (`system:maintenance`).
 
+## Malformed argument coverage (#339)
+
+`test/fuzz/soroban-arguments-fuzz.spec.ts` builds deterministic `submit_price`
+envelopes from a seeded mutation sequence. It covers missing and extra arguments,
+wrong `ScVal` types, oversized symbols, invalid addresses, nested vectors/maps
+where scalars are expected, and conflicting integer widths. Every case must fail
+with `INVALID_PAYLOAD` before `scValToNative` runs, so a malformed argument never
+escapes as a raw SDK `TypeError` and never reaches event cross-checking. The
+canonical six-argument ABI remains the contract described above: no schema change
+or migration is introduced.
+
 The separate legacy payload signing and submission services use a different protocol.
 Their payloads are not automatically treated as Stellar submissions. This verifier
 requires a successful Stellar `submit_price` transaction and its matching XDR digest;

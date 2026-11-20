@@ -150,7 +150,10 @@ Developers, SDK generators, and automated client agents can query the live catal
 
 ### Endpoints
 - **`GET /errors/catalog`**: Returns `{ total: number, catalog: ErrorCatalogItem[] }` covering every stable `ErrorCode`.
+- **`GET /errors/catalog/contracts`**: Returns `{ total: number, catalog: ContractErrorMapping[] }` covering contract-level error codes with their stable `ErrorCode`, HTTP status, retryability, client message and remediation hint (#340).
 - **`GET /errors/catalog/:code`**: Returns `ErrorCatalogItem` for a specific code (case-insensitive, trims whitespace). Returns HTTP 404 (`NOT_FOUND`) if the code is unknown.
+
+Contract error mappings live in `src/common/errors/contract-error-catalog.ts`. They reuse existing stable `ErrorCode` values, so the frozen public catalog and SDK contract are unchanged. Clients should key on `contractCode` for contract-specific recovery and on `errorCode` for generic retry handling.
 
 ### Path Behaviors & Guarantees
 1. **Normal Path**:

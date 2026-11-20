@@ -1,6 +1,10 @@
 import { Dirent, readdirSync } from "fs";
 import { basename, join, relative, sep } from "path";
 import { DataSource } from "typeorm";
+import {
+  VersionedMigrationNote,
+  VERSIONED_MIGRATION_NOTES,
+} from "./migration-notes.types";
 
 export type StorageSchemaCompatibilityStatus =
   | "up-to-date"
@@ -27,6 +31,12 @@ export interface StorageSchemaCompatibilityReport {
   pendingVersions: string[];
   reason: string;
   checkedAt: string;
+  /** Versioned migration notes for pending and evaluated versions (#424) */
+  migrationNotes?: Record<string, VersionedMigrationNote>;
+  /** True if any pending migration contains breaking changes (#424) */
+  hasBreakingPending?: boolean;
+  /** Identifiers of pending migrations that cannot be automatically rolled back (#424) */
+  irreversiblePendingVersions?: string[];
 }
 
 export interface CompatibilityCheckOptions {
@@ -182,6 +192,7 @@ function incompatibleReport(
 export function evaluateMigrationCompatibility(
   knownMigrations: MigrationVersion[],
   appliedMigrations: AppliedMigration[],
+  notesMap: Record<string, VersionedMigrationNote> = VERSIONED_MIGRATION_NOTES,
 ): StorageSchemaCompatibilityReport {
   const known = [...knownMigrations].sort((a, b) => a.timestamp - b.timestamp);
   const applied = [...appliedMigrations];
@@ -259,7 +270,23 @@ export function evaluateMigrationCompatibility(
       pendingVersions: [],
       reason: "Database migration history exactly matches this application build.",
       checkedAt: new Date().toISOString(),
+      migrationNotes: {},
+      hasBreakingPending: false,
+      irreversiblePendingVersions: [],
     };
+  }
+
+  const pendingNotes: Record<string, VersionedMigrationNote> = {};
+  const irreversible: string[] = [];
+  let hasBreaking = false;
+
+  for (const item of pending) {
+    const note = notesMap[item.id];
+    if (note) {
+      pendingNotes[item.id] = note;
+      if (note.impact === "breaking") hasBreaking = true;
+      if (!note.reversible) irreversible.push(item.id);
+    }
   }
 
   return {
@@ -273,6 +300,9 @@ export function evaluateMigrationCompatibility(
     reason:
       "Database migration history is a valid prefix of this application build and can advance through the pending migrations in order.",
     checkedAt: new Date().toISOString(),
+    migrationNotes: pendingNotes,
+    hasBreakingPending: hasBreaking,
+    irreversiblePendingVersions: irreversible,
   };
 }
 

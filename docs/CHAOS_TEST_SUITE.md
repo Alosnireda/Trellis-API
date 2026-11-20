@@ -46,6 +46,7 @@ The suite is built on top of the existing fault-injection harness (`src/testing/
 | `src/infrastructure/retry-scheduler/retry-scheduler.chaos.spec.ts` | Retry scheduler | Network faults, back-off scheduling, dead-letter, process kills, idempotent scheduling, concurrent worker race |
 | `src/infrastructure/workers/background-worker.chaos.spec.ts` | Background job worker | Process kills, retry exhaustion, missing handler, stale payload, concurrent claim guard, persistence failures |
 | `src/defi/chaos/defi-workflow.chaos.spec.ts` | DeFi position sync and yield optimisation | Network faults, process kills, DB constraint violations, stale position reads, double-submit guard |
+| `src/payments/chaos/payment-recovery-workflow.chaos.spec.ts` | Payment sign/submit recovery | Normal submit, kill before submit, kill after submit before final save, wrong-owner authorization, duplicate-submit ledger |
 
 ---
 
@@ -95,6 +96,8 @@ A process kill (SIGKILL, OOM kill, container eviction) can interrupt execution a
 | `after-status-update` | Row status = SENDING, no delivery log | Re-run from the beginning; the status reset is idempotent |
 | `after-claim-before-handler` | Job/operation row = IN_PROGRESS | Recovery scanner resets IN_PROGRESS rows older than `claimTtlMs` back to PENDING |
 | `after-handler-before-ack` | Handler ran, completion not persisted | Re-run with an idempotency guard in the handler (check the delivery log or a processed-IDs set) |
+| `after-claim-before-submit` | Payment operation claimed as SUBMITTING, no chain submission | Status check before any retry; the recovery path marks RECOVERY_REQUIRED and reconciles before resubmitting |
+| `after-submit-before-save` | Chain submission committed, final row still RECOVERY_REQUIRED | Status check resolves the transaction hash and returns the saved result without a second submission |
 
 **Rollback/recovery steps for each kill-point:**
 
@@ -106,6 +109,8 @@ A process kill (SIGKILL, OOM kill, container eviction) can interrupt execution a
    - An idempotency key stored in the DB before the side effect is produced.
    - A check of the delivery log (if the log shows SENT, skip re-delivery).
    - A processed-IDs in-memory set (valid for single-process deployments).
+
+4. **Payment submit kill-points** — The operation row is authoritative. A retry checks transaction status before calling the processor again. If the ledger already confirms the payment, the saved `submittedTransaction` is returned; if no submission was recorded, the same signed payload is reused. A caller from another owner sees NotFound and never reaches the side-effect ledger. The side-effect ledger in the chaos spec proves one chain submission across both failure paths. Rollback is a code revert; no schema change is involved.
 
 ### Stale Reads
 
