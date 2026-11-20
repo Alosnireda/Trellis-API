@@ -1,0 +1,11 @@
+{
+  "jobId": "demo-records",
+  "status": "completed",
+  "dryRun": true,
+  "cursor": null,
+  "scanned": 3,
+  "repaired": 0,
+  "detected": 2,
+  "failures": [],
+  "journal": []
+}

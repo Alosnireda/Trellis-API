@@ -47,6 +47,7 @@
     "openapi:validate": "ts-node -r tsconfig-paths/register scripts/validate-openapi.ts",
     "openapi:check:breaking": "ts-node -r tsconfig-paths/register scripts/validate-openapi.ts --check-breaking-changes",
     "diagnostics": "ts-node -r tsconfig-paths/register scripts/diagnostics.ts",
+    "repair": "ts-node --transpile-only -r tsconfig-paths/register scripts/repair.ts",
     "events:replay": "ts-node -r tsconfig-paths/register scripts/replay-events.ts",
     "backfill": "ts-node --transpile-only -r tsconfig-paths/register scripts/backfill.ts",
     "diagnostics:quick": "ts-node -r tsconfig-paths/register scripts/diagnostics.ts --quick",

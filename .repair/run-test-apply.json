@@ -1,0 +1,28 @@
+{
+  "jobId": "run-test-apply",
+  "status": "completed",
+  "dryRun": false,
+  "cursor": null,
+  "scanned": 3,
+  "repaired": 2,
+  "detected": 0,
+  "failures": [],
+  "journal": [
+    {
+      "recordId": "rec-2",
+      "before": {
+        "id": "rec-2",
+        "status": "orphaned",
+        "orphaned": true
+      }
+    },
+    {
+      "recordId": "rec-3",
+      "before": {
+        "id": "rec-3",
+        "status": "stale",
+        "orphaned": false
+      }
+    }
+  ]
+}

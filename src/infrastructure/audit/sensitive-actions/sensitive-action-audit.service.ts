@@ -1,6 +1,6 @@
-import { BadRequestException, Injectable, Logger } from "@nestjs/common";
+import { BadRequestException, Injectable, Logger, NotFoundException, Optional } from "@nestjs/common";
 import { InjectRepository } from "@nestjs/typeorm";
-import { createHash } from "crypto";
+import { createHash, createHmac, timingSafeEqual } from "crypto";
 import {
   Between,
   LessThanOrEqual,
@@ -28,6 +28,16 @@ import {
   describeSensitiveAction,
   isSensitiveAction,
 } from "./sensitive-action.enum";
+import {
+  PrivilegedActionReceipt,
+  PrivilegedReceiptIntegrity,
+  PrivilegedReceiptSigner,
+  PrivilegedReceiptVerification,
+  buildPrivilegedReceipt,
+  signPrivilegedReceipt,
+  verifyPrivilegedReceipt,
+} from "./privileged-action-receipt";
+import { ExportSigningService } from "../algorithms/export-signing.service";
 
 export interface RecordSensitiveActionInput {
   action: SensitiveAction;
@@ -91,6 +101,8 @@ export class SensitiveActionAuditService {
     private readonly repo: Repository<SensitiveActionEvent>,
     @InjectRepository(SensitiveActionChainHead)
     private readonly headRepo: Repository<SensitiveActionChainHead>,
+    @Optional()
+    private readonly signingService?: ExportSigningService,
   ) {}
 
   /** The declared catalogue maintainers can review and extend. */
@@ -433,5 +445,62 @@ export class SensitiveActionAuditService {
     return createHash("sha256")
       .update(JSON.stringify(this.buildHashInput(event)))
       .digest("hex");
+  }
+
+  /**
+   * Issues a signed, verifiable audit receipt for an executed privileged action event.
+   */
+  async issueReceipt(
+    eventId: string,
+    signer?: PrivilegedReceiptSigner,
+  ): Promise<{ receipt: PrivilegedActionReceipt; integrity: PrivilegedReceiptIntegrity }> {
+    const event = await this.repo.findOne({ where: { id: eventId } });
+    if (!event) {
+      throw new NotFoundException(`Sensitive action event '${eventId}' not found`);
+    }
+
+    const effectiveSigner = signer ?? this.resolveSigner();
+    const receipt = buildPrivilegedReceipt(event);
+    const integrity = signPrivilegedReceipt(receipt, effectiveSigner);
+
+    return { receipt, integrity };
+  }
+
+  /**
+   * Verifies the cryptographic integrity and hash of a privileged action receipt.
+   */
+  async verifyReceipt(
+    receipt: PrivilegedActionReceipt,
+    integrity: PrivilegedReceiptIntegrity,
+    signer?: PrivilegedReceiptSigner,
+  ): Promise<PrivilegedReceiptVerification> {
+    const effectiveSigner = signer ?? this.resolveSigner();
+    return verifyPrivilegedReceipt(receipt, integrity, effectiveSigner);
+  }
+
+  private resolveSigner(): PrivilegedReceiptSigner {
+    if (this.signingService) {
+      return this.signingService;
+    }
+    const key =
+      process.env.AUDIT_EXPORT_SIGNING_KEY ||
+      process.env.AUDIT_SIGNING_KEY ||
+      "trellis-privileged-audit-key-default";
+    return {
+      sign: (payload: string): string => {
+        return createHmac("sha256", key).update(payload).digest("hex");
+      },
+      verify: (payload: string, signature: string): boolean => {
+        const expected = createHmac("sha256", key).update(payload).digest("hex");
+        try {
+          return timingSafeEqual(
+            Buffer.from(expected, "hex"),
+            Buffer.from(signature, "hex"),
+          );
+        } catch {
+          return false;
+        }
+      },
+    };
   }
 }
