@@ -155,7 +155,7 @@ describe("PrivacyExportAuthorizer (#296)", () => {
       }) as any;
 
       expect(sanitized.users[0].email).toBe("b***b@stellar.org");
-      expect(sanitized.users[0].secrets.apiKey).toBeUndefined();
+      expect(sanitized.users[0].secrets).toBeUndefined();
     });
   });
 });

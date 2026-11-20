@@ -84,10 +84,14 @@ export class ExportService {
       await this.exportRepo.save(exportRecord);
 
       const data = await this.extractData(exportRecord);
-      const sanitized = this.applyPrivacyFilters(data, exportRecord.scope, context);
+      const sanitized = this.applyPrivacyFilters(data, exportRecord.scope, {
+        isOwner: true,
+        ...context,
+      });
       const content = this.serialize(sanitized, exportRecord.format);
 
       exportRecord.status = ExportStatus.COMPLETED;
+      exportRecord.error = null;
       exportRecord.downloadUrl = `data:application/${exportRecord.format};base64,${Buffer.from(content).toString("base64")}`;
       exportRecord.completedAt = new Date();
       await this.exportRepo.save(exportRecord);
@@ -98,6 +102,8 @@ export class ExportService {
       // carry credentials from the failing dependency (#271).
       const reason = sanitizeErrorMessage(String(error?.message ?? error));
       exportRecord.status = ExportStatus.FAILED;
+      exportRecord.downloadUrl = null;
+      exportRecord.completedAt = null;
       exportRecord.error = reason;
       await this.exportRepo.save(exportRecord);
       this.logger.error(`Export ${exportId} failed: ${reason}`);
@@ -186,7 +192,7 @@ export class ExportService {
   ): any {
     const authContext: FieldAuthorizationContext = {
       role: context?.role ?? "user",
-      isOwner: context?.isOwner ?? true,
+      isOwner: context?.isOwner ?? false,
       includePiiConsent: context?.includePiiConsent ?? false,
     };
     return this.privacyAuthorizer.filterRecord(data, authContext);

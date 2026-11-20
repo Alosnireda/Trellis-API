@@ -36,6 +36,37 @@ describe("ExportService", () => {
     jest.clearAllMocks();
   });
 
+  it("defaults to non-owner field permissions when caller context is omitted", () => {
+    expect(service.applyPrivacyFilters({
+      balance: 100,
+      email: "alice@example.test",
+      privateKey: "fixture",
+    }, ExportScope.USER_DATA)).toEqual({
+      balance: "[CONFIDENTIAL]",
+      email: "a***e@example.test",
+    });
+  });
+
+  it("clears stale artifacts on failure and clears the failure reason on retry", async () => {
+    const record = {
+      id: "retry",
+      scope: ExportScope.USER_DATA,
+      format: "json",
+      downloadUrl: "data:application/json;base64,old",
+      completedAt: new Date(),
+    } as DataExport;
+    mockExportRepo.findOne.mockResolvedValue(record);
+    const filter = jest.spyOn(service, "applyPrivacyFilters").mockImplementationOnce(() => {
+      throw new Error("temporary serialization failure");
+    });
+    await service.processExport(record.id);
+    expect(record).toMatchObject({ status: ExportStatus.FAILED, downloadUrl: null, completedAt: null });
+    await service.processExport(record.id);
+    expect(record).toMatchObject({ status: ExportStatus.COMPLETED, error: null });
+    expect(record.downloadUrl).toMatch(/^data:application\/json;base64,/);
+    filter.mockRestore();
+  });
+
   describe("createExport", () => {
     it("should create an export with default values", async () => {
       const mockExport = {
