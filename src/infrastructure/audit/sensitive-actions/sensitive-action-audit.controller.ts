@@ -1,7 +1,10 @@
 import {
+  Body,
   Controller,
   Get,
+  HttpCode,
   Param,
+  Post,
   Query,
   Req,
   Res,
@@ -25,6 +28,10 @@ import {
   QuerySensitiveActionDto,
 } from "./dto/query-sensitive-action.dto";
 import { SensitiveAction } from "./sensitive-action.enum";
+import {
+  PrivilegedActionReceipt,
+  PrivilegedReceiptIntegrity,
+} from "./privileged-action-receipt";
 
 /**
  * Maintainer-facing read API for the sensitive action trail.
@@ -137,5 +144,33 @@ export class SensitiveActionAuditController {
       resourceId,
       limit ? Number(limit) : 100
     );
+  }
+
+  @Get(":id/receipt")
+  @ApiOperation({
+    summary: "Issue and retrieve a signed audit receipt for a privileged action",
+    description:
+      "Returns a canonical, tamper-evident audit receipt with HMAC-SHA256 signature for verification.",
+  })
+  @ApiParam({ name: "id", example: "evt_01H..." })
+  @ApiResponse({ status: 200, description: "Signed audit receipt and integrity block" })
+  @ApiResponse({ status: 404, description: "Event not found" })
+  async getReceipt(@Param("id") id: string) {
+    return this.auditService.issueReceipt(id);
+  }
+
+  @Post("receipt/verify")
+  @HttpCode(200)
+  @ApiOperation({
+    summary: "Verify a signed privileged action audit receipt",
+    description:
+      "Re-canonicalizes the receipt document, recomputes the SHA-256 hash, and verifies the HMAC-SHA256 signature.",
+  })
+  @ApiResponse({ status: 200, description: "Verification result" })
+  async verifyReceipt(
+    @Body("receipt") receipt: PrivilegedActionReceipt,
+    @Body("integrity") integrity: PrivilegedReceiptIntegrity,
+  ) {
+    return this.auditService.verifyReceipt(receipt, integrity);
   }
 }

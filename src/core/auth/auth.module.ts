@@ -35,6 +35,9 @@ import { User } from "../user/entities/user.entity";
 import { ApiKey } from "./entities/api-key.entity";
 import { ApiKeysService } from "./api-keys.service";
 import { ApiKeysController } from "./api-keys.controller";
+import { CapabilityTokenController } from "./capability/capability-token.controller";
+import { CAPABILITY_TOKEN_PROVIDERS } from "./capability/capability-token.providers";
+import { CapabilityTokenService } from "./capability/capability-token.service";
 import { EmailVerification } from "./entities/email-verification.entity";
 import { Wallet } from "./entities/wallet.entity";
 import { RefreshToken, TwoFactorAuth } from "./entities/auth.entity";
@@ -117,9 +120,12 @@ import { ReferralFraudService } from "src/growth/referral/referral-fraud.service
     GrantfoxController,
     ImpersonationController,
     ApiKeysController,
+    CapabilityTokenController,
   ],
   providers: [
     ApiKeysService,
+    // Expiring capability tokens for sensitive actions (#273)
+    ...CAPABILITY_TOKEN_PROVIDERS,
     // Legacy services (for backward compatibility)
     AuthService,
     ChallengeService,
@@ -175,6 +181,7 @@ import { ReferralFraudService } from "src/growth/referral/referral-fraud.service
     GrantfoxOAuthService,
     ImpersonationService,
     ImpersonationGuard,
+    CapabilityTokenService,
     TypeOrmModule,
   ],
 })
