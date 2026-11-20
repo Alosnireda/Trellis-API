@@ -1,7 +1,7 @@
 import { Injectable, Logger, OnModuleInit } from "@nestjs/common";
 import { InjectQueue } from "@nestjs/bull";
 import { Queue } from "bull";
-import { JobStatus, WorkerJob, RetryPolicy, DEFAULT_RETRY_POLICY, WorkerJobPayload, JobPriority } from "./worker.interface";
+import { JobStatus, WorkerJob, RetryPolicy, DEFAULT_RETRY_POLICY, WorkerJobPayload, JobPriority, TERMINAL_STATUSES, JobCleanupFn } from "./worker.interface";
 import {
   withTraceContext,
   runTracedJob,
@@ -19,6 +19,7 @@ export class BackgroundWorkerService implements OnModuleInit {
   private readonly logger = new Logger(BackgroundWorkerService.name);
   private readonly jobStore = new Map<string, WorkerJob>();
   private readonly policies = new Map<string, RetryPolicy>();
+  private readonly cleanupHandlers = new Map<string, JobCleanupFn>();
 
   constructor(@InjectQueue("background-jobs") private readonly queue: Queue) {
     // Register default policies eagerly so they exist even when the module
@@ -183,21 +184,90 @@ export class BackgroundWorkerService implements OnModuleInit {
     return job;
   }
 
+  /**
+   * Register a cleanup function for a job type. The function is called once
+   * after a job of that type transitions to CANCELLED, giving the handler a
+   * chance to release locks, delete temp files, or emit compensating events.
+   */
+  registerCleanupHandler(type: string, fn: JobCleanupFn): void {
+    this.cleanupHandlers.set(type, fn);
+  }
+
+  /**
+   * Request cancellation of a pending or active job.
+   *
+   * - Pending / delayed jobs are removed from the Bull queue immediately and
+   *   their status set to CANCELLED.
+   * - Active jobs have `cancelRequested` set to true; the worker checks this
+   *   flag between processing steps and cooperates by stopping early. The
+   *   status becomes CANCELLED once the worker acknowledges.
+   * - Terminal jobs (COMPLETED, DEAD_LETTER, CANCELLED) are left unchanged
+   *   and false is returned.
+   *
+   * Returns true when the cancellation was accepted (status changed or flag
+   * set), false when the job was not found or already in a terminal state.
+   */
   async cancelJob(id: string): Promise<boolean> {
     const job = this.jobStore.get(id);
-    if (!job || job.status === JobStatus.COMPLETED || job.status === JobStatus.FAILED) {
+    if (!job || TERMINAL_STATUSES.has(job.status)) {
       return false;
     }
 
-    const bullJob = await this.queue.getJob(job.id);
-    if (bullJob) {
-      await bullJob.remove();
+    if (job.status === JobStatus.ACTIVE) {
+      // Signal the worker to stop cooperatively; status transitions when it
+      // acknowledges (or when the Bull job is forcibly removed on timeout).
+      job.cancelRequested = true;
+      job.updatedAt = new Date();
+      this.logger.log(`Cancel requested for active job ${id} (type=${job.type})`);
+      return true;
     }
-    await (this.queue as any).remove(job.id);
-    job.status = JobStatus.FAILED;
+
+    // Pending / delayed: remove from queue and mark as cancelled now.
+    try {
+      const bullJob = await this.queue.getJob(job.id);
+      if (bullJob) {
+        await bullJob.remove();
+      }
+    } catch (err) {
+      this.logger.warn(`Could not remove Bull job ${id} from queue: ${err instanceof Error ? err.message : String(err)}`);
+    }
+
+    job.status = JobStatus.CANCELLED;
+    job.cancelledAt = new Date();
     job.updatedAt = new Date();
-    job.error = "Cancelled by user";
+    job.error = "Cancelled by operator";
+    this.logger.log(`Job ${id} (type=${job.type}) cancelled`);
+
+    await this.runCleanup(job);
     return true;
+  }
+
+  /**
+   * Acknowledge a cooperative cancellation from within a worker. The worker
+   * calls this after detecting `cancelRequested === true` and stopping its
+   * own processing loop.
+   */
+  async acknowledgeCancel(id: string): Promise<void> {
+    const job = this.jobStore.get(id);
+    if (!job || !job.cancelRequested) return;
+    job.status = JobStatus.CANCELLED;
+    job.cancelledAt = new Date();
+    job.updatedAt = new Date();
+    job.error = "Cancelled by operator (cooperative)";
+    this.logger.log(`Job ${id} (type=${job.type}) acknowledged cooperative cancellation`);
+    await this.runCleanup(job);
+  }
+
+  private async runCleanup(job: WorkerJob): Promise<void> {
+    const handler = this.cleanupHandlers.get(job.type);
+    if (!handler) return;
+    try {
+      await handler(job);
+    } catch (err) {
+      this.logger.error(
+        `Cleanup handler for job ${job.id} (type=${job.type}) threw: ${err instanceof Error ? err.message : String(err)}`
+      );
+    }
   }
 
   async getMetrics() {
@@ -206,6 +276,7 @@ export class BackgroundWorkerService implements OnModuleInit {
     const completed = jobs.filter((j) => j.status === JobStatus.COMPLETED).length;
     const failed = jobs.filter((j) => j.status === JobStatus.FAILED).length;
     const deadLettered = jobs.filter((j) => j.status === JobStatus.DEAD_LETTER).length;
+    const cancelled = jobs.filter((j) => j.status === JobStatus.CANCELLED).length;
     const pending = jobs.filter((j) => j.status === JobStatus.PENDING || j.status === JobStatus.ACTIVE).length;
 
     return {
@@ -213,6 +284,7 @@ export class BackgroundWorkerService implements OnModuleInit {
       completed,
       failed,
       deadLettered,
+      cancelled,
       pending,
       successRate: total > 0 ? (completed / total) * 100 : 0,
       byType: jobs.reduce<Record<string, number>>((acc, j) => { acc[j.type] = (acc[j.type] || 0) + 1; return acc; }, {}),
@@ -226,6 +298,7 @@ export class BackgroundWorkerService implements OnModuleInit {
     job.updatedAt = new Date();
     if (status === JobStatus.COMPLETED) job.completedAt = new Date();
     if (status === JobStatus.FAILED || status === JobStatus.DEAD_LETTER) job.failedAt = new Date();
+    if (status === JobStatus.CANCELLED) job.cancelledAt = new Date();
     Object.assign(job, updates);
   }
 
