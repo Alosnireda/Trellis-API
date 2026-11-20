@@ -26,6 +26,8 @@ import { ApiBearerAuth, ApiTags } from "@nestjs/swagger";
 import { ApiKeysService } from "./api-keys.service";
 import { AllowedStrategies } from "./decorators/allowed-strategies.decorator";
 import { Permission } from "src/common/guard/roles.enum";
+import { RequireCapabilityToken } from "./capability/capability-token.interceptor";
+import { CapabilityAction } from "./capability/capability-token.types";
 
 export class CreateApiKeyDto {
   @IsString()
@@ -63,6 +65,7 @@ export class ApiKeysController {
   }
 
   @Post()
+  @RequireCapabilityToken(CapabilityAction.API_KEY_CREATE)
   create(@Req() req: any, @Body() body: CreateApiKeyDto) {
     return this.keys.create(
       this.owner(req),
@@ -78,6 +81,9 @@ export class ApiKeysController {
   }
 
   @Delete(":id")
+  @RequireCapabilityToken(CapabilityAction.API_KEY_REVOKE, {
+    resourceParam: "id",
+  })
   revoke(@Req() req: any, @Param("id", ParseUUIDPipe) id: string) {
     return this.keys.revoke(this.owner(req), id);
   }

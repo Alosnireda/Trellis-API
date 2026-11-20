@@ -265,6 +265,8 @@ describe("sanitize.util", () => {
       "creditcard",
       "cvv",
       "pin",
+      "capabilitytoken",
+      "stepupcode",
     ];
 
     expectedFields.forEach((field) => {
@@ -281,12 +283,30 @@ describe("sanitize.util", () => {
       "set-cookie",
       "x-api-key",
       "x-auth-token",
+      "x-capability-token",
     ];
 
     expectedHeaders.forEach((header) => {
       it(`includes '${header}'`, () => {
         expect(SENSITIVE_HEADERS.has(header)).toBe(true);
       });
+    });
+  });
+
+  it("redacts capability tokens and step-up codes wherever they are logged (#273)", () => {
+    expect(
+      sanitizeHeaders({ "X-Capability-Token": "cap1.payload.signature" }),
+    ).toEqual({ "X-Capability-Token": REDACTED });
+    expect(
+      sanitizeObject({
+        capabilityToken: "cap1.a.b",
+        stepUpCode: "123456",
+        token: "cap1.c.d",
+      }),
+    ).toEqual({
+      capabilityToken: REDACTED,
+      stepUpCode: REDACTED,
+      token: REDACTED,
     });
   });
 });

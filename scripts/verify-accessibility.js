@@ -59,13 +59,23 @@ async function run() {
   let contract;
   let suites;
   try {
-    contract = await import(`file://${contractPath.replace(/\\/g, "/")}`);
-    suites = await import(`file://${suitesPath.replace(/\\/g, "/")}`);
+    require("ts-node/register");
+    contract = require(contractPath);
+    suites = require(suitesPath);
   } catch (_err) {
-    const createJiti = require("jiti");
-    const jiti = createJiti(__filename);
-    contract = jiti(contractPath);
-    suites = jiti(suitesPath);
+    try {
+      contract = await import(`file://${contractPath.replace(/\\/g, "/")}`);
+      suites = await import(`file://${suitesPath.replace(/\\/g, "/")}`);
+    } catch (_err2) {
+      try {
+        const createJiti = require("jiti");
+        const jiti = createJiti(__filename);
+        contract = jiti(contractPath);
+        suites = jiti(suitesPath);
+      } catch (_err3) {
+        throw new Error(`Failed to load TypeScript accessibility contracts: ${_err.message}`);
+      }
+    }
   }
 
   // Test 1: Reduced-Motion Contract

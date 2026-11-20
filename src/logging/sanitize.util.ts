@@ -29,6 +29,8 @@ export const SENSITIVE_FIELDS = new Set<string>([
   "authtoken",
   "sessiontoken",
   "bearertoken",
+  "capabilitytoken",
+  "stepupcode",
   // API access
   "secret",
   "apikey",
@@ -74,6 +76,7 @@ export const SENSITIVE_HEADERS = new Set<string>([
   "x-auth-token",
   "x-access-token",
   "x-refresh-token",
+  "x-capability-token",
   "proxy-authorization",
   "www-authenticate",
 ]);
