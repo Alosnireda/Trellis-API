@@ -1,0 +1,18 @@
+{
+  "id": "webhook-control-characters",
+  "category": "malformed",
+  "target": "api.body-validation",
+  "description": "Webhook payload with unescaped control characters in JSON",
+  "input": {
+    "provider": "stripe",
+    "headers": {
+      "stripe-signature": "t=1800000000,v1=signature"
+    },
+    "rawBody": "{\"id\":\"evt_control\",\"type\":\"charge.succeeded\",\"data\":{\"object\":{\"memo\":\"test\u0001\u0002\u0003\u0004\u0005\u0006\u0007\u0008\u0009control\"}}}",
+    "timestamp": 1800000000
+  },
+  "expected": {
+    "rejected": true,
+    "reason": "Unescaped control characters detected"
+  }
+}
