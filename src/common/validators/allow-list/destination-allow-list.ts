@@ -62,9 +62,10 @@ export interface DestinationPolicy {
   ports: number[];
   /**
    * Allowed hosts: `example.com` (exact) or `*.example.com` (any subdomain,
-   * not the apex). Empty means any *public* host.
+   * not the apex). Empty means any public host only when requireHosts is false.
    */
   hosts: string[];
+  requireHosts?: boolean;
   /** Accept IP-literal hosts (still subject to the public-address check). */
   allowIpLiterals: boolean;
   /** Resolve the host and require every address to be public. */
@@ -118,6 +119,7 @@ function readBool(value: unknown): boolean | undefined {
  * - `WEBHOOK_DESTINATION_ALLOWED_HOSTS` — comma-separated hosts / `*.domain`
  * - `WEBHOOK_DESTINATION_ALLOWED_PORTS` — comma-separated (default `443`)
  * - `WEBHOOK_DESTINATION_ALLOW_HTTP`    — `true` to also allow `http` (port 80)
+ * Production requires an explicit host list.
  */
 export function webhookDestinationPolicy(
   get: (key: string) => unknown = (key) => process.env[key],
@@ -135,6 +137,7 @@ export function webhookDestinationPolicy(
           ? [443, 80]
           : [443],
     hosts: splitList(get("WEBHOOK_DESTINATION_ALLOWED_HOSTS")),
+    requireHosts: get("NODE_ENV") === "production",
     allowIpLiterals: false,
     resolveDns: true,
     maxLength: 2048,
@@ -261,7 +264,7 @@ export class DestinationAllowListService {
     }
 
     if (
-      policy.hosts.length > 0 &&
+      (policy.requireHosts || policy.hosts.length > 0) &&
       !policy.hosts.some((p) => hostMatchesPattern(hostname, p))
     ) {
       throw new DestinationNotAllowedError(

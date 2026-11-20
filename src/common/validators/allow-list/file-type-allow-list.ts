@@ -445,7 +445,8 @@ export function checkFileTypeAllowList(
       ? candidate.signatures.some((signature) =>
           matchesSignature(file.buffer!, signature),
         )
-      : isPlainText(file.buffer!),
+      : isPlainText(file.buffer!) &&
+        (candidate.id !== "json" || isJson(file.buffer!)),
   );
   if (!entry) {
     errors.push(`File content does not match the declared ${mime} type`);
@@ -455,6 +456,15 @@ export function checkFileTypeAllowList(
   return errors.length > 0
     ? { allowed: false, entry, errors }
     : { allowed: true, entry, errors };
+}
+
+function isJson(buffer: Buffer): boolean {
+  try {
+    JSON.parse(buffer.toString("utf8").replace(/^\uFEFF/, ""));
+    return true;
+  } catch {
+    return false;
+  }
 }
 
 export type FileTypeAllowListMode = "enforce" | "report" | "off";
