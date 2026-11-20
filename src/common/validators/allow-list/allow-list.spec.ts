@@ -47,6 +47,11 @@ async function codeOf(promise: Promise<unknown>): Promise<string | undefined> {
 }
 
 describe("DestinationAllowListService", () => {
+  it("requires an explicit production destination allow-list before lookup", async () => {
+    const allowList = service({ NODE_ENV: "production" });
+    expect(await codeOf(allowList.validate("https://hooks.example.com"))).toBe("DESTINATION_HOST_NOT_ALLOWED");
+    expect(allowList.lookups).toEqual([]);
+  });
   it("accepts a public https destination and normalizes it", async () => {
     const allowList = service();
     const result = await allowList.validate(
@@ -182,6 +187,11 @@ describe("DestinationAllowListService", () => {
 });
 
 describe("checkFileTypeAllowList", () => {
+  it("verifies JSON syntax in addition to extension and declared MIME", () => {
+    const file = { originalname: "fixture.json", mimetype: "application/json" };
+    expect(checkFileTypeAllowList({ ...file, buffer: Buffer.from('{"ok":true}') }).allowed).toBe(true);
+    expect(checkFileTypeAllowList({ ...file, buffer: Buffer.from("not JSON") }).allowed).toBe(false);
+  });
   const png = Buffer.from([
     0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 0x00,
   ]);

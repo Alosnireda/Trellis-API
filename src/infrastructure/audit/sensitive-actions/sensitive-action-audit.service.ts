@@ -1,4 +1,4 @@
-import { BadRequestException, Injectable, Logger, NotFoundException, Optional } from "@nestjs/common";
+import { BadRequestException, Injectable, Logger, NotFoundException, Optional, ServiceUnavailableException } from "@nestjs/common";
 import { InjectRepository } from "@nestjs/typeorm";
 import { createHash, createHmac, timingSafeEqual } from "crypto";
 import {
@@ -484,8 +484,10 @@ export class SensitiveActionAuditService {
     }
     const key =
       process.env.AUDIT_EXPORT_SIGNING_KEY ||
-      process.env.AUDIT_SIGNING_KEY ||
-      "trellis-privileged-audit-key-default";
+      process.env.AUDIT_SIGNING_KEY;
+    if (!key) {
+      throw new ServiceUnavailableException("Audit receipt signing is not configured");
+    }
     return {
       sign: (payload: string): string => {
         return createHmac("sha256", key).update(payload).digest("hex");

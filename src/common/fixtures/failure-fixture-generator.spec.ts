@@ -44,6 +44,16 @@ describe("FailureFixtureGenerator", () => {
   });
 
   describe("Persistence & Distributed Failure Fixtures", () => {
+    it("reproduces the same failure and rejects an unexhausted retry fixture", () => {
+      expect(FailureFixtureGenerator.generatePartialCommit()).toEqual(
+        FailureFixtureGenerator.generatePartialCommit(),
+      );
+      const spill = FailureFixtureGenerator.generateDeadLetterSpill();
+      expect(FailureFixtureGenerator.generateDeadLetterSpill()).toEqual(spill);
+      expect(FailureFixtureGenerator.generateDeadLetterSpill("other").eventId).not.toBe(spill.eventId);
+      expect(() => FailureFixtureGenerator.generateDeadLetterSpill("other", 4)).toThrow(RangeError);
+    });
+
     it("should generate partial commit fixture with compensation actions", () => {
       const fixture = FailureFixtureGenerator.generatePartialCommit("tx-deadlock-99");
 

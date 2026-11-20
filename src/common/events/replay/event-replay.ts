@@ -62,6 +62,8 @@ export interface ProjectionCheckpoint<S = unknown> {
   sequence: number;
   state: S;
   savedAt: string;
+  /** Optional for checkpoints written before ledger-link verification. */
+  lastHash?: string | null;
 }
 
 export interface CheckpointStore {
@@ -235,7 +237,7 @@ export class EventReplayEngine {
       ? (structuredClone(checkpoint.state) as S)
       : projection.initialState();
     let lastSequence = checkpoint?.sequence ?? 0;
-    let lastHash: string | null = null;
+    let lastHash: string | null = checkpoint?.lastHash ?? null;
 
     const report: ReplayReport = {
       projection: projection.name,
@@ -368,6 +370,7 @@ export class EventReplayEngine {
           sequence: lastSequence,
           state: structuredClone(state),
           savedAt: new Date().toISOString(),
+          lastHash,
         });
         report.checkpoints += 1;
         sinceCheckpoint = 0;
