@@ -18,8 +18,30 @@ import {
   PrivilegedReceiptSigner,
 } from "./privileged-action-receipt";
 import { BadRequestException } from "@nestjs/common";
+import { ExportSigningService } from "../algorithms/export-signing.service";
 
 describe("Signed Audit Receipts for Privileged Actions", () => {
+  it("requires a configured signing key and rejects malformed signatures", () => {
+    const oldExportKey = process.env.AUDIT_EXPORT_SIGNING_KEY;
+    const oldAuditKey = process.env.AUDIT_SIGNING_KEY;
+    try {
+      delete process.env.AUDIT_EXPORT_SIGNING_KEY;
+      delete process.env.AUDIT_SIGNING_KEY;
+      expect(() => new ExportSigningService().sign("receipt")).toThrow(/not configured/);
+      process.env.AUDIT_EXPORT_SIGNING_KEY = "synthetic-test-key";
+      const signer = new ExportSigningService();
+      const signature = signer.sign("receipt");
+      expect(signer.verify("receipt", signature)).toBe(true);
+      expect(signer.verify("changed receipt", signature)).toBe(false);
+      expect(signer.verify("receipt", "invalid")).toBe(false);
+    } finally {
+      if (oldExportKey === undefined) delete process.env.AUDIT_EXPORT_SIGNING_KEY;
+      else process.env.AUDIT_EXPORT_SIGNING_KEY = oldExportKey;
+      if (oldAuditKey === undefined) delete process.env.AUDIT_SIGNING_KEY;
+      else process.env.AUDIT_SIGNING_KEY = oldAuditKey;
+    }
+  });
+
   const secretKey = "test-audit-receipt-secret-key-2026";
 
   const fakeSigner: PrivilegedReceiptSigner = {
