@@ -1,5 +1,7 @@
 import { createHash } from "crypto";
 
+const FIXTURE_TIME = "2026-10-18T10:00:00.000Z";
+
 export interface LedgerReorganizationFixture {
   originalLedgerSequence: number;
   originalBlockHash: string;
@@ -167,6 +169,7 @@ export class FailureFixtureGenerator {
    */
   static generatePartialCommit(
     transactionId = "tx-partial-fail-001",
+    committedAt = FIXTURE_TIME,
   ): PartialCommitFixture {
     return {
       transactionId,
@@ -174,7 +177,7 @@ export class FailureFixtureGenerator {
         {
           table: "reconciliation_invoices",
           id: "inv-98765",
-          committedAt: new Date().toISOString(),
+          committedAt,
         },
       ],
       failedEntities: [
@@ -198,14 +201,18 @@ export class FailureFixtureGenerator {
   static generateDeadLetterSpill(
     topic = "webhook.settlement.confirmed",
     attempts = 5,
+    exhaustionTimestamp = FIXTURE_TIME,
   ): DeadLetterSpillFixture {
+    if (!Number.isSafeInteger(attempts) || attempts < 5) {
+      throw new RangeError("Dead-letter fixtures require at least five attempts");
+    }
     return {
-      eventId: `evt_dlq_${Date.now()}`,
+      eventId: `evt_dlq_${createHash("sha256").update(JSON.stringify([topic, attempts, exhaustionTimestamp])).digest("hex").slice(0, 16)}`,
       topic,
       attemptsMade: attempts,
       maxRetriesAllowed: 5,
-      exhaustionTimestamp: new Date().toISOString(),
-      lastFailureReason: "HTTP 503: Service Unavailable upstream for 5 consecutive attempts",
+      exhaustionTimestamp,
+      lastFailureReason: `HTTP 503: Service Unavailable upstream for ${attempts} consecutive attempts`,
       payload: {
         settlementId: "settle-abc-123",
         amountStroops: 50000000,
