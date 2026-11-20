@@ -40,7 +40,17 @@ export const MAX_LEDGER_KEYS_PER_REQUEST = 200;
 /** Upper bound for one ledger scan: at most five RPC round trips. */
 export const MAX_LEDGER_KEYS_PER_SCAN = 1000;
 /** Persistent key of the oracle contract's price history map. */
-const FEED_HISTORY_KEY = "feed_his";
+export const FEED_HISTORY_KEY = "feed_his";
+/** The one contract function verify() accepts, and its exact argument types. */
+export const SUBMIT_PRICE_FUNCTION = "submit_price";
+export const SUBMIT_PRICE_ARGUMENT_TYPES: readonly string[] = [
+  "scvAddress",
+  "scvSymbol",
+  "scvI128",
+  "scvU32",
+  "scvU64",
+  "scvU64",
+];
 
 export type LedgerEntryState = "live" | "archived" | "missing";
 
@@ -346,7 +356,7 @@ export class StellarOracleAdapter {
     if (
       Address.fromScAddress(invocation.contractAddress).toString() !==
         this.contract ||
-      invocation.functionName.toString() !== "submit_price"
+      invocation.functionName.toString() !== SUBMIT_PRICE_FUNCTION
     ) {
       throw new OracleVerificationError(
         "WRONG_CONTRACT",
@@ -354,14 +364,7 @@ export class StellarOracleAdapter {
       );
     }
     const args = invocation.args;
-    const types = [
-      "scvAddress",
-      "scvSymbol",
-      "scvI128",
-      "scvU32",
-      "scvU64",
-      "scvU64",
-    ];
+    const types = SUBMIT_PRICE_ARGUMENT_TYPES;
     if (
       args.length !== types.length ||
       args.some((arg, index) => arg.type !== types[index])

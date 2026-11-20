@@ -19,7 +19,9 @@ import {
   Matches,
 } from "class-validator";
 import {
+  DEFAULT_HISTORY_PAGE_SIZE,
   MAX_SUBMISSION_BATCH,
+  SubmissionHistoryPageQuery,
   SubmissionHistoryService,
 } from "./services/submission-history.service";
 import {
@@ -102,6 +104,20 @@ export class SubmissionHistoryController {
     return this.verifier.start();
   }
 
+  /** Bounded keyset pagination for high-volume history (#334). */
+  @Get("page")
+  @RequirePermissions(Permission.ORACLE_VERIFY)
+  historyPage(
+    @Query("limit", new DefaultValuePipe(DEFAULT_HISTORY_PAGE_SIZE), ParseIntPipe)
+    limit: number,
+    @Query("cursor") cursor?: string,
+    @Query("status") status?: SubmissionHistoryPageQuery["status"],
+    @Query("submitter") submitter?: string,
+  ) {
+    return this.historyService.historyPage({ cursor, limit, status, submitter });
+  }
+
+  /** Offset paging is kept for existing clients; prefer `GET page`. */
   @Get()
   @RequirePermissions(Permission.ORACLE_VERIFY)
   history(

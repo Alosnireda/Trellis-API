@@ -6,6 +6,7 @@ import {
 import { InjectRepository } from "@nestjs/typeorm";
 import { In, Repository } from "typeorm";
 import { SubmissionHistory } from "src/blockchain/oracle/entities/submission-history.entity";
+import { CursorPaginationService } from "src/common/pagination/cursor-pagination.service";
 
 export interface SubmissionReference {
   payloadHash: string;
@@ -73,9 +74,32 @@ function sameReference(row: SubmissionReference, ref: SubmissionReference) {
   );
 }
 
+export const DEFAULT_HISTORY_PAGE_SIZE = 50;
+export const MAX_HISTORY_PAGE_SIZE = 100;
+const HISTORY_STATUSES: ReadonlyArray<SubmissionHistory["verificationStatus"]> =
+  ["pending", "verified", "rejected"];
+
+export interface SubmissionHistoryPageQuery {
+  cursor?: string;
+  limit?: number;
+  status?: SubmissionHistory["verificationStatus"];
+  submitter?: string;
+}
+
+export interface SubmissionHistoryPage {
+  items: SubmissionHistory[];
+  /** Opaque; pass back as `cursor`. Null on the last page. */
+  nextCursor: string | null;
+  hasMore: boolean;
+  limit: number;
+}
+
 /** Retain these compact replay keys indefinitely; do not TTL or delete verified rows. */
 @Injectable()
 export class SubmissionHistoryService {
+  // Stateless codec; constructed here so the module wiring is unchanged.
+  private readonly cursors = new CursorPaginationService();
+
   constructor(
     @InjectRepository(SubmissionHistory)
     private readonly repository: Repository<SubmissionHistory>,
@@ -213,6 +237,81 @@ export class SubmissionHistoryService {
     };
   }
 
+  /**
+   * Keyset page over the (append-only, never pruned) history, newest first
+   * (#334). Cost is one indexed range scan of `limit + 1` rows regardless of
+   * depth, and rows inserted while paging never shift or duplicate a page.
+   *
+   * Ordering uses `createdAt` truncated to milliseconds: the column keeps
+   * microseconds but a cursor carries a JS Date, so comparing raw values
+   * would skip rows sharing the cursor's millisecond.
+   */
+  async historyPage(
+    query: SubmissionHistoryPageQuery = {},
+  ): Promise<SubmissionHistoryPage> {
+    const limit = query.limit ?? DEFAULT_HISTORY_PAGE_SIZE;
+    if (!Number.isInteger(limit) || limit < 1 || limit > MAX_HISTORY_PAGE_SIZE) {
+      throw new BadRequestException(
+        `History page limit must be 1–${MAX_HISTORY_PAGE_SIZE}`,
+      );
+    }
+    if (
+      query.status !== undefined &&
+      !HISTORY_STATUSES.includes(query.status)
+    ) {
+      throw new BadRequestException(
+        `History status must be one of ${HISTORY_STATUSES.join(", ")}`,
+      );
+    }
+    if (
+      query.submitter !== undefined &&
+      !/^[GC][A-Z2-7]{55}$/.test(query.submitter)
+    ) {
+      throw new BadRequestException("History submitter must be a Stellar address");
+    }
+
+    const createdAt = `date_trunc('milliseconds', history."createdAt")`;
+    const qb = this.repository
+      .createQueryBuilder("history")
+      .orderBy(createdAt, "DESC")
+      .addOrderBy("history.id", "DESC")
+      .limit(limit + 1);
+    if (query.status) {
+      qb.andWhere("history.verificationStatus = :status", {
+        status: query.status,
+      });
+    }
+    if (query.submitter) {
+      qb.andWhere("history.submitter = :submitter", {
+        submitter: query.submitter,
+      });
+    }
+    if (query.cursor) {
+      // Throws 400 for malformed, oversized or non-canonical cursors.
+      const position = this.cursors.decode(query.cursor);
+      qb.andWhere(
+        `(${createdAt} < :cursorCreatedAt OR ` +
+          `(${createdAt} = :cursorCreatedAt AND history.id < :cursorId))`,
+        { cursorCreatedAt: position.createdAt, cursorId: position.id },
+      );
+    }
+
+    const rows = await qb.getMany();
+    const hasMore = rows.length > limit;
+    const items = hasMore ? rows.slice(0, limit) : rows;
+    const last = items[items.length - 1];
+    return {
+      items,
+      nextCursor:
+        hasMore && last
+          ? this.cursors.encode({ createdAt: last.createdAt, id: last.id })
+          : null,
+      hasMore,
+      limit,
+    };
+  }
+
+  /** @deprecated Offset paging degrades with depth; use {@link historyPage}. */
   history(limit = 100, offset = 0) {
     if (
       !Number.isInteger(limit) ||

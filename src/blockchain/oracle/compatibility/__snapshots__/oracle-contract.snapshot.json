@@ -1,0 +1,269 @@
+{
+  "digest": "3fa4c70686b19374669c0a65b17cf1b638849308f42ec8db13bc6aa98581822e",
+  "snapshot": {
+    "events": {
+      "kinds": {
+        "price": [
+          {
+            "fields": [
+              {
+                "name": "feed_id",
+                "type": "symbol"
+              },
+              {
+                "name": "price",
+                "type": "i128"
+              },
+              {
+                "name": "submitter",
+                "type": "address"
+              },
+              {
+                "name": "timestamp",
+                "type": "u64"
+              }
+            ],
+            "version": 1
+          },
+          {
+            "fields": [
+              {
+                "name": "feed_id",
+                "type": "symbol"
+              },
+              {
+                "name": "price",
+                "type": "i128"
+              },
+              {
+                "name": "submitter",
+                "type": "address"
+              },
+              {
+                "name": "timestamp",
+                "type": "u64"
+              },
+              {
+                "name": "correlation_id",
+                "type": "symbol"
+              }
+            ],
+            "version": 2
+          }
+        ],
+        "slashed": [
+          {
+            "fields": [
+              {
+                "name": "submitter",
+                "type": "address"
+              },
+              {
+                "name": "penalty_amount",
+                "type": "i128"
+              },
+              {
+                "name": "remaining_stake",
+                "type": "i128"
+              },
+              {
+                "name": "reason",
+                "type": "symbol"
+              },
+              {
+                "name": "timestamp",
+                "type": "u64"
+              }
+            ],
+            "version": 1
+          }
+        ],
+        "staked": [
+          {
+            "fields": [
+              {
+                "name": "submitter",
+                "type": "address"
+              },
+              {
+                "name": "amount",
+                "type": "i128"
+              },
+              {
+                "name": "total_stake",
+                "type": "i128"
+              },
+              {
+                "name": "timestamp",
+                "type": "u64"
+              }
+            ],
+            "version": 1
+          }
+        ],
+        "stale": [
+          {
+            "fields": [
+              {
+                "name": "window_seconds",
+                "type": "u64"
+              },
+              {
+                "name": "timestamp",
+                "type": "u64"
+              }
+            ],
+            "version": 1
+          },
+          {
+            "fields": [
+              {
+                "name": "window_seconds",
+                "type": "u64"
+              },
+              {
+                "name": "timestamp",
+                "type": "u64"
+              },
+              {
+                "name": "correlation_id",
+                "type": "symbol"
+              }
+            ],
+            "version": 2
+          }
+        ],
+        "sub_del": [
+          {
+            "fields": [
+              {
+                "name": "submitter",
+                "type": "address"
+              },
+              {
+                "name": "timestamp",
+                "type": "u64"
+              }
+            ],
+            "version": 1
+          },
+          {
+            "fields": [
+              {
+                "name": "submitter",
+                "type": "address"
+              },
+              {
+                "name": "timestamp",
+                "type": "u64"
+              },
+              {
+                "name": "correlation_id",
+                "type": "symbol"
+              }
+            ],
+            "version": 2
+          }
+        ],
+        "sub_reg": [
+          {
+            "fields": [
+              {
+                "name": "submitter",
+                "type": "address"
+              },
+              {
+                "name": "timestamp",
+                "type": "u64"
+              }
+            ],
+            "version": 1
+          },
+          {
+            "fields": [
+              {
+                "name": "submitter",
+                "type": "address"
+              },
+              {
+                "name": "timestamp",
+                "type": "u64"
+              },
+              {
+                "name": "correlation_id",
+                "type": "symbol"
+              }
+            ],
+            "version": 2
+          }
+        ],
+        "unbond": [
+          {
+            "fields": [
+              {
+                "name": "submitter",
+                "type": "address"
+              },
+              {
+                "name": "amount",
+                "type": "i128"
+              },
+              {
+                "name": "unlock_time",
+                "type": "u64"
+              },
+              {
+                "name": "timestamp",
+                "type": "u64"
+              }
+            ],
+            "version": 1
+          }
+        ],
+        "withdrawn": [
+          {
+            "fields": [
+              {
+                "name": "submitter",
+                "type": "address"
+              },
+              {
+                "name": "amount",
+                "type": "i128"
+              },
+              {
+                "name": "timestamp",
+                "type": "u64"
+              }
+            ],
+            "version": 1
+          }
+        ]
+      },
+      "namespace": "oracle"
+    },
+    "functions": {
+      "submit_price": {
+        "args": [
+          "scvAddress",
+          "scvSymbol",
+          "scvI128",
+          "scvU32",
+          "scvU64",
+          "scvU64"
+        ]
+      }
+    },
+    "limits": {
+      "maxContractEventsPerTransaction": 100,
+      "maxEventDataFields": 16
+    },
+    "schema": "trellis.oracle.contract-compat-snapshot.v1",
+    "storage": {
+      "feedHistory": {
+        "durability": "persistent",
+        "key": "feed_his"
+      }
+    }
+  }
+}
