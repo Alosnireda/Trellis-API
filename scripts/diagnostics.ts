@@ -8,6 +8,8 @@
  * Usage:
  *   npm run diagnostics          — full check
  *   npm run diagnostics -- --quick   — skip slow network checks
+ *   npm run diagnostics -- --json    — machine-readable report on stdout
+ *   npm run diagnostics -- --only=env,db — run selected sections only
  *
  * This script NEVER mutates any data.  All checks are read-only.
  *
@@ -32,6 +34,14 @@ import {
   checkEnvTemplateDrift,
   checkPortAvailable,
 } from "../src/diagnostics/diagnostics-checks";
+import {
+  buildJsonReport,
+  DIAGNOSTICS_USAGE,
+  DiagnosticSection,
+  diagnosticsExitCode,
+  parseDiagnosticsArgs,
+  summarizeChecks,
+} from "../src/diagnostics/diagnostics-report";
 
 // ──────────────────────────────────────────────────────────────────────────────
 // Colour helpers (no deps — use raw ANSI so the script runs before npm install)
@@ -160,8 +170,18 @@ function runCmd(cmd: string): string | null {
 // ──────────────────────────────────────────────────────────────────────────────
 // Arg parsing
 // ──────────────────────────────────────────────────────────────────────────────
-const args = process.argv.slice(2);
-const QUICK = args.includes("--quick");
+const parsedArgs = parseDiagnosticsArgs(process.argv.slice(2));
+if (!parsedArgs.ok) {
+  console.error(`${parsedArgs.error}\n\n${DIAGNOSTICS_USAGE}`);
+  process.exit(2);
+}
+const OPTIONS = parsedArgs.options;
+if (OPTIONS.help) {
+  console.log(DIAGNOSTICS_USAGE);
+  process.exit(0);
+}
+const QUICK = OPTIONS.quick;
+const JSON_MODE = OPTIONS.json;
 const ROOT = path.resolve(__dirname, "..");
 
 // ──────────────────────────────────────────────────────────────────────────────
@@ -696,6 +716,10 @@ async function checkTests(): Promise<void> {
 // MAIN — run all checks and print summary
 // ──────────────────────────────────────────────────────────────────────────────
 async function main(): Promise<void> {
+  // In --json mode stdout carries only the report, so section output is muted.
+  const realLog = console.log;
+  if (JSON_MODE) console.log = () => undefined;
+
   console.log(c.bold("═══════════════════════════════════════════════════════════════"));
   console.log(c.bold("  Trellis API — Contributor Diagnostics"));
   console.log(c.bold("═══════════════════════════════════════════════════════════════"));
@@ -704,15 +728,27 @@ async function main(): Promise<void> {
     console.log(c.yellow("  Running in --quick mode (network checks skipped)\n"));
   }
 
-  await checkTools();
-  await checkDependencies();
-  await checkEnv();
-  await checkDatabase();
-  await checkRedis();
-  await checkStellar();
-  await checkSmtp();
-  await checkBuild();
-  await checkTests();
+  const sectionRunners: Record<DiagnosticSection, () => Promise<void>> = {
+    tools: checkTools,
+    deps: checkDependencies,
+    env: checkEnv,
+    db: checkDatabase,
+    redis: checkRedis,
+    stellar: checkStellar,
+    smtp: checkSmtp,
+    build: checkBuild,
+    tests: checkTests,
+  };
+  for (const section of OPTIONS.sections) {
+    await sectionRunners[section]();
+  }
+
+  if (JSON_MODE) {
+    console.log = realLog;
+    const report = buildJsonReport(results, OPTIONS);
+    console.log(JSON.stringify(report, null, 2));
+    process.exit(report.ok ? 0 : 1);
+  }
 
   // ── Summary ──────────────────────────────────────────────────────────
   console.log(c.bold("\n═══════════════════════════════════════════════════════════════"));

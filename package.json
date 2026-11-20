@@ -70,6 +70,7 @@
     "verify:accessibility": "node scripts/verify-accessibility.js",
     "verify:evidence-bundles": "node scripts/verify-evidence-bundles.js",
     "verify:release-readiness": "node scripts/verify-release-readiness.js",
+    "storage-ttl:check": "ts-node -r tsconfig-paths/register scripts/storage-ttl-check.ts",
     "release:gate": "ts-node -r tsconfig-paths/register scripts/release-gate.ts"
   },
   "dependencies": {

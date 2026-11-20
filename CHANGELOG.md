@@ -8,6 +8,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+- Recovery-evidence gate in the release gate (restore drill, RPO/RTO targets and
+  post-restore invariant report) ([#493](docs/RELEASE_READINESS.md))
+- `--json`, `--only` and `--help` options for the contributor diagnostics
+  command ([#491](docs/DEVELOPER_DIAGNOSTICS.md))
+- Storage TTL monitoring, repair planning and an ADMIN-only repair service with
+  retry and idempotency, plus `npm run storage-ttl:check`
+  ([#337](docs/STORAGE_TTL_MONITORING.md))
+- Held operations: queue work during an emergency pause and replay it after
+  resume with idempotency, expiry and re-pause handling
+  ([#338](docs/HELD_OPERATIONS.md))
 - Expiring, single-use capability tokens for sensitive actions: minted with
   `POST /auth/capabilities` (TOTP step-up when 2FA is on), required on API key
   create/revoke when `CAPABILITY_TOKENS_ENFORCED=true`, consumed only on
