@@ -14,7 +14,7 @@ import {
 } from "./release-readiness.checker";
 import { SchemaColumnSpec } from "./release-readiness.types";
 
-export type ReleaseGateName = "tests" | "migrations" | "rollback";
+export type ReleaseGateName = "tests" | "migrations" | "rollback" | "recovery";
 export type ReleaseGateStatus = "PASSED" | "BLOCKED" | "WAIVED";
 
 export interface TestSuiteEvidence {
@@ -34,6 +34,27 @@ export interface RollbackRehearsalEvidence {
   evidenceUrl?: string;
 }
 
+/**
+ * Evidence that data can be recovered after a bad release (#493): a verified
+ * backup, a restore drill measured against the RPO/RTO targets, and a clean
+ * disaster-recovery invariant report taken after the restore.
+ */
+export interface RecoveryEvidence {
+  backupVerifiedAt: string;
+  restoreDrillAt: string;
+  restoreOutcome: "passed" | "failed";
+  /** Targets the release commits to, in minutes. */
+  targetRpoMinutes: number;
+  targetRtoMinutes: number;
+  /** What the drill actually measured, in minutes. */
+  measuredRpoMinutes: number;
+  measuredRtoMinutes: number;
+  /** `isConsistent` and `criticalFailures` from the post-restore DR validation report. */
+  invariantsConsistent: boolean;
+  criticalFailures: number;
+  evidenceUrl?: string;
+}
+
 export interface ReleaseGateWaiver {
   gate: ReleaseGateName;
   reason: string;
@@ -47,6 +68,7 @@ export interface ReleaseGateEvidence {
   migrations: Array<{ filename: string; content: string }>;
   schemaChanges?: SchemaColumnSpec[];
   rollback?: RollbackRehearsalEvidence;
+  recovery?: RecoveryEvidence;
   waivers?: ReleaseGateWaiver[];
 }
 
@@ -54,6 +76,8 @@ export interface ReleaseGateOptions {
   now?: Date;
   /** Rehearsals older than this are stale evidence. Default 14 days. */
   maxRehearsalAgeDays?: number;
+  /** Recovery drills and backup checks older than this are stale. Default 30 days. */
+  maxRecoveryAgeDays?: number;
 }
 
 export interface ReleaseGateResult {
@@ -88,7 +112,9 @@ function evaluateTests(evidence: ReleaseGateEvidence): ReleaseGateResult {
   }
   for (const suite of suites) {
     if (suite.failed > 0) {
-      reasons.push(`Test suite '${suite.name}' has ${suite.failed} failing test(s)`);
+      reasons.push(
+        `Test suite '${suite.name}' has ${suite.failed} failing test(s)`,
+      );
     } else if (suite.passed === 0) {
       reasons.push(`Test suite '${suite.name}' ran no passing tests`);
     }
@@ -99,7 +125,12 @@ function evaluateTests(evidence: ReleaseGateEvidence): ReleaseGateResult {
     }
   }
 
-  return { gate: "tests", status: reasons.length ? "BLOCKED" : "PASSED", reasons, warnings };
+  return {
+    gate: "tests",
+    status: reasons.length ? "BLOCKED" : "PASSED",
+    reasons,
+    warnings,
+  };
 }
 
 function evaluateMigrations(evidence: ReleaseGateEvidence): ReleaseGateResult {
@@ -132,7 +163,11 @@ function evaluateRollback(
       reasons.push("Schema changes require a recorded rollback rehearsal");
     }
   } else {
-    if (!rehearsal.previousVersion || !rehearsal.revertCommand || !rehearsal.rehearsedBy) {
+    if (
+      !rehearsal.previousVersion ||
+      !rehearsal.revertCommand ||
+      !rehearsal.rehearsedBy
+    ) {
       reasons.push(
         "Rollback evidence must name the previous version, the revert command, and who rehearsed it",
       );
@@ -144,11 +179,117 @@ function evaluateRollback(
     if (Number.isNaN(rehearsedAt) || rehearsedAt > now.getTime()) {
       reasons.push("Rollback rehearsal timestamp is invalid or in the future");
     } else if (now.getTime() - rehearsedAt > maxAgeDays * DAY_MS) {
-      reasons.push(`Rollback rehearsal is older than ${maxAgeDays} days; rehearse again`);
+      reasons.push(
+        `Rollback rehearsal is older than ${maxAgeDays} days; rehearse again`,
+      );
     }
   }
 
-  return { gate: "rollback", status: reasons.length ? "BLOCKED" : "PASSED", reasons, warnings };
+  return {
+    gate: "rollback",
+    status: reasons.length ? "BLOCKED" : "PASSED",
+    reasons,
+    warnings,
+  };
+}
+
+function checkRecoveryTimestamp(
+  label: string,
+  value: string,
+  now: Date,
+  maxAgeDays: number,
+  reasons: string[],
+): void {
+  const at = new Date(value).getTime();
+  if (Number.isNaN(at) || at > now.getTime()) {
+    reasons.push(`${label} timestamp is invalid or in the future`);
+  } else if (now.getTime() - at > maxAgeDays * DAY_MS) {
+    reasons.push(`${label} is older than ${maxAgeDays} days; repeat it`);
+  }
+}
+
+function evaluateRecovery(
+  evidence: ReleaseGateEvidence,
+  now: Date,
+  maxAgeDays: number,
+): ReleaseGateResult {
+  const reasons: string[] = [];
+  const warnings: string[] = [];
+  const changesSchema =
+    evidence.migrations.length > 0 || (evidence.schemaChanges?.length ?? 0) > 0;
+  const recovery = evidence.recovery;
+
+  if (!recovery) {
+    if (changesSchema) {
+      reasons.push(
+        "Schema changes require recorded recovery evidence (backup and restore drill)",
+      );
+    }
+    return {
+      gate: "recovery",
+      status: reasons.length ? "BLOCKED" : "PASSED",
+      reasons,
+      warnings,
+    };
+  }
+
+  checkRecoveryTimestamp(
+    "Backup verification",
+    recovery.backupVerifiedAt,
+    now,
+    maxAgeDays,
+    reasons,
+  );
+  checkRecoveryTimestamp(
+    "Restore drill",
+    recovery.restoreDrillAt,
+    now,
+    maxAgeDays,
+    reasons,
+  );
+
+  if (recovery.restoreOutcome !== "passed") {
+    reasons.push("The restore drill did not pass");
+  }
+  if (!(recovery.targetRpoMinutes > 0) || !(recovery.targetRtoMinutes > 0)) {
+    reasons.push(
+      "Recovery targets (RPO and RTO) must be positive numbers of minutes",
+    );
+  } else {
+    if (
+      !(recovery.measuredRpoMinutes >= 0) ||
+      recovery.measuredRpoMinutes > recovery.targetRpoMinutes
+    ) {
+      reasons.push(
+        `Measured RPO ${recovery.measuredRpoMinutes}m exceeds the ${recovery.targetRpoMinutes}m target`,
+      );
+    }
+    if (
+      !(recovery.measuredRtoMinutes >= 0) ||
+      recovery.measuredRtoMinutes > recovery.targetRtoMinutes
+    ) {
+      reasons.push(
+        `Measured RTO ${recovery.measuredRtoMinutes}m exceeds the ${recovery.targetRtoMinutes}m target`,
+      );
+    }
+  }
+  if (!recovery.invariantsConsistent || recovery.criticalFailures > 0) {
+    reasons.push(
+      `Post-restore invariant validation is not clean (${recovery.criticalFailures} critical failure(s))`,
+    );
+  }
+  if (!recovery.evidenceUrl) {
+    warnings.push(
+      "Recovery evidence has no evidenceUrl; reviewers cannot audit the drill",
+    );
+  }
+
+  return {
+    gate: "recovery",
+    status: reasons.length ? "BLOCKED" : "PASSED",
+    reasons,
+    warnings,
+  };
 }
 
 function applyWaiver(
@@ -162,10 +303,16 @@ function applyWaiver(
   if (waiver.approverRole !== Role.ADMIN) {
     return {
       ...result,
-      reasons: [...result.reasons, `Waiver for '${result.gate}' rejected: approver is not an ADMIN`],
+      reasons: [
+        ...result.reasons,
+        `Waiver for '${result.gate}' rejected: approver is not an ADMIN`,
+      ],
     };
   }
-  if (!waiver.approvedBy || (waiver.reason ?? "").trim().length < MIN_WAIVER_REASON_LENGTH) {
+  if (
+    !waiver.approvedBy ||
+    (waiver.reason ?? "").trim().length < MIN_WAIVER_REASON_LENGTH
+  ) {
     return {
       ...result,
       reasons: [
@@ -196,6 +343,7 @@ export function evaluateReleaseGate(
     evaluateTests(evidence),
     evaluateMigrations(evidence),
     evaluateRollback(evidence, now, options.maxRehearsalAgeDays ?? 14),
+    evaluateRecovery(evidence, now, options.maxRecoveryAgeDays ?? 30),
   ].map((g) => applyWaiver(g, waivers));
 
   const blockingReasons = gates

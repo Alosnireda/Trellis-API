@@ -1,4 +1,8 @@
-import { evaluateReleaseGate, ReleaseGateEvidence } from "./release-gate";
+import {
+  evaluateReleaseGate,
+  RecoveryEvidence,
+  ReleaseGateEvidence,
+} from "./release-gate";
 
 const NOW = new Date("2026-10-18T12:00:00Z");
 
@@ -12,7 +16,22 @@ const SAFE_MIGRATION = {
   `,
 };
 
-function evidence(overrides: Partial<ReleaseGateEvidence> = {}): ReleaseGateEvidence {
+const RECOVERY: RecoveryEvidence = {
+  backupVerifiedAt: "2026-10-10T10:00:00Z",
+  restoreDrillAt: "2026-10-12T10:00:00Z",
+  restoreOutcome: "passed",
+  targetRpoMinutes: 15,
+  targetRtoMinutes: 60,
+  measuredRpoMinutes: 5,
+  measuredRtoMinutes: 40,
+  invariantsConsistent: true,
+  criticalFailures: 0,
+  evidenceUrl: "https://example.com/drill/1",
+};
+
+function evidence(
+  overrides: Partial<ReleaseGateEvidence> = {},
+): ReleaseGateEvidence {
   return {
     releaseId: "v1.2.3",
     tests: {
@@ -30,6 +49,7 @@ function evidence(overrides: Partial<ReleaseGateEvidence> = {}): ReleaseGateEvid
       revertCommand: "npm run migration:revert",
       outcome: "passed",
     },
+    recovery: RECOVERY,
     ...overrides,
   };
 }
@@ -40,7 +60,12 @@ describe("evaluateReleaseGate (issue #372)", () => {
   it("passes when tests, migrations, and rollback evidence are all sound", () => {
     const decision = gate(evidence());
     expect(decision.decision).toBe("PASS");
-    expect(decision.gates.map((g) => g.status)).toEqual(["PASSED", "PASSED", "PASSED"]);
+    expect(decision.gates.map((g) => g.status)).toEqual([
+      "PASSED",
+      "PASSED",
+      "PASSED",
+      "PASSED",
+    ]);
   });
 
   describe("tests", () => {
@@ -49,7 +74,9 @@ describe("evaluateReleaseGate (issue #372)", () => {
       e.tests.suites[0].failed = 2;
       const decision = gate(e);
       expect(decision.decision).toBe("BLOCKED");
-      expect(decision.blockingReasons).toContain("[tests] Test suite 'unit' has 2 failing test(s)");
+      expect(decision.blockingReasons).toContain(
+        "[tests] Test suite 'unit' has 2 failing test(s)",
+      );
     });
 
     it("blocks when a required suite has no result or none are declared", () => {
@@ -83,7 +110,11 @@ describe("evaluateReleaseGate (issue #372)", () => {
     it("blocks an irreversible migration", () => {
       const e = evidence({
         migrations: [
-          { filename: "2-bad.ts", content: "export class Bad { async up(q) { await q.query('SELECT 1'); } }" },
+          {
+            filename: "2-bad.ts",
+            content:
+              "export class Bad { async up(q) { await q.query('SELECT 1'); } }",
+          },
         ],
       });
       const decision = gate(e);
@@ -101,7 +132,9 @@ describe("evaluateReleaseGate (issue #372)", () => {
     });
 
     it("does not demand a rehearsal when nothing touches the schema", () => {
-      expect(gate(evidence({ migrations: [], rollback: undefined })).decision).toBe("PASS");
+      expect(
+        gate(evidence({ migrations: [], rollback: undefined })).decision,
+      ).toBe("PASS");
     });
 
     it("blocks a failed, stale, future-dated, or incomplete rehearsal", () => {
@@ -122,11 +155,131 @@ describe("evaluateReleaseGate (issue #372)", () => {
       const decision = gate(
         evidence({
           schemaChanges: [
-            { table: "users", column: "flag", isNew: true, isNullable: false, hasDefault: false },
+            {
+              table: "users",
+              column: "flag",
+              isNew: true,
+              isNullable: false,
+              hasDefault: false,
+            },
           ],
         }),
       );
       expect(decision.decision).toBe("BLOCKED");
+    });
+  });
+
+  describe("recovery evidence (#493)", () => {
+    const withRecovery = (r: Partial<RecoveryEvidence>) =>
+      gate(evidence({ recovery: { ...RECOVERY, ...r } }));
+    const recoveryReasons = (d: ReturnType<typeof gate>) =>
+      d.gates.find((g) => g.gate === "recovery")!.reasons.join(" | ");
+
+    it("blocks schema changes that carry no recovery evidence", () => {
+      const d = gate(evidence({ recovery: undefined }));
+      expect(d.decision).toBe("BLOCKED");
+      expect(recoveryReasons(d)).toContain(
+        "require recorded recovery evidence",
+      );
+    });
+
+    it("passes a release with no schema changes and no recovery evidence", () => {
+      const d = gate(
+        evidence({ migrations: [], recovery: undefined, rollback: undefined }),
+      );
+      expect(d.gates.find((g) => g.gate === "recovery")!.status).toBe("PASSED");
+    });
+
+    it("blocks a failed restore drill", () => {
+      expect(
+        recoveryReasons(withRecovery({ restoreOutcome: "failed" })),
+      ).toContain("did not pass");
+    });
+
+    it("blocks measured RPO and RTO that miss their targets", () => {
+      const reasons = recoveryReasons(
+        withRecovery({ measuredRpoMinutes: 30, measuredRtoMinutes: 90 }),
+      );
+      expect(reasons).toContain("Measured RPO 30m exceeds the 15m target");
+      expect(reasons).toContain("Measured RTO 90m exceeds the 60m target");
+    });
+
+    it("blocks non-positive targets and negative measurements", () => {
+      expect(recoveryReasons(withRecovery({ targetRpoMinutes: 0 }))).toContain(
+        "must be positive",
+      );
+      expect(
+        recoveryReasons(withRecovery({ measuredRtoMinutes: -1 })),
+      ).toContain("Measured RTO");
+      expect(
+        recoveryReasons(withRecovery({ measuredRpoMinutes: Number.NaN })),
+      ).toContain("Measured RPO");
+    });
+
+    it("blocks stale, invalid, and future timestamps", () => {
+      expect(
+        recoveryReasons(
+          withRecovery({ restoreDrillAt: "2026-08-01T00:00:00Z" }),
+        ),
+      ).toContain("Restore drill is older than 30 days");
+      expect(
+        recoveryReasons(withRecovery({ backupVerifiedAt: "garbage" })),
+      ).toContain("Backup verification timestamp is invalid");
+      expect(
+        recoveryReasons(
+          withRecovery({ backupVerifiedAt: "2026-12-01T00:00:00Z" }),
+        ),
+      ).toContain("in the future");
+    });
+
+    it("blocks a dirty post-restore invariant report", () => {
+      expect(
+        recoveryReasons(
+          withRecovery({ invariantsConsistent: false, criticalFailures: 2 }),
+        ),
+      ).toContain("2 critical failure(s)");
+      expect(recoveryReasons(withRecovery({ criticalFailures: 1 }))).toContain(
+        "not clean",
+      );
+    });
+
+    it("warns, without blocking, when the drill has no evidence link", () => {
+      const d = withRecovery({ evidenceUrl: undefined });
+      const g = d.gates.find((x) => x.gate === "recovery")!;
+      expect(g.status).toBe("PASSED");
+      expect(g.warnings.join()).toContain("evidenceUrl");
+    });
+
+    it("honours a custom maximum evidence age", () => {
+      const d = evaluateReleaseGate(evidence(), {
+        now: NOW,
+        maxRecoveryAgeDays: 3,
+      });
+      expect(d.decision).toBe("BLOCKED");
+    });
+
+    it("lets an ADMIN waive a blocked recovery gate, and rejects a non-admin", () => {
+      const base = {
+        recovery: { ...RECOVERY, restoreOutcome: "failed" as const },
+      };
+      const waiver = {
+        gate: "recovery" as const,
+        reason: "Restore env outage, tracked in INC-12",
+        approvedBy: "a",
+      };
+      expect(
+        gate(
+          evidence({
+            ...base,
+            waivers: [{ ...waiver, approverRole: "ADMIN" }],
+          }),
+        ).decision,
+      ).toBe("PASS");
+      expect(
+        gate(
+          evidence({ ...base, waivers: [{ ...waiver, approverRole: "USER" }] }),
+        ).decision,
+      ).toBe("BLOCKED");
     });
   });
 
@@ -137,7 +290,12 @@ describe("evaluateReleaseGate (issue #372)", () => {
       const decision = gate({
         ...blocked(),
         waivers: [
-          { gate: "rollback", reason: "hotfix with no schema impact", approvedBy: "a@x.io", approverRole: "ADMIN" },
+          {
+            gate: "rollback",
+            reason: "hotfix with no schema impact",
+            approvedBy: "a@x.io",
+            approverRole: "ADMIN",
+          },
         ],
       });
       expect(decision.decision).toBe("PASS");
@@ -149,7 +307,12 @@ describe("evaluateReleaseGate (issue #372)", () => {
       const decision = gate({
         ...blocked(),
         waivers: [
-          { gate: "rollback", reason: "hotfix with no schema impact", approvedBy: "u@x.io", approverRole: "USER" },
+          {
+            gate: "rollback",
+            reason: "hotfix with no schema impact",
+            approvedBy: "u@x.io",
+            approverRole: "USER",
+          },
         ],
       });
       expect(decision.decision).toBe("BLOCKED");
@@ -159,7 +322,14 @@ describe("evaluateReleaseGate (issue #372)", () => {
     it("rejects a waiver with a short reason", () => {
       const decision = gate({
         ...blocked(),
-        waivers: [{ gate: "rollback", reason: "ok", approvedBy: "a@x.io", approverRole: "ADMIN" }],
+        waivers: [
+          {
+            gate: "rollback",
+            reason: "ok",
+            approvedBy: "a@x.io",
+            approverRole: "ADMIN",
+          },
+        ],
       });
       expect(decision.decision).toBe("BLOCKED");
     });
@@ -170,7 +340,12 @@ describe("evaluateReleaseGate (issue #372)", () => {
       const decision = gate({
         ...e,
         waivers: [
-          { gate: "rollback", reason: "unrelated waiver here", approvedBy: "a@x.io", approverRole: "ADMIN" },
+          {
+            gate: "rollback",
+            reason: "unrelated waiver here",
+            approvedBy: "a@x.io",
+            approverRole: "ADMIN",
+          },
         ],
       });
       expect(decision.decision).toBe("BLOCKED");

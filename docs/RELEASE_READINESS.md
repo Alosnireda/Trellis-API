@@ -131,7 +131,7 @@ The endpoint runs migration safety parsing, executes smoke probes with retry/bac
 ## Release Gate
 
 Issue #372. `evaluateReleaseGate` in `src/common/release/release-gate.ts` turns
-the three kinds of release evidence into one decision. It reuses the migration
+the four kinds of release evidence (tests, migrations, rollback, recovery) into one decision. It reuses the migration
 and rollback analysis above and performs no I/O.
 
 ```bash
@@ -155,6 +155,18 @@ npm run release:gate -- evidence.json   # exit 0 PASS, 1 BLOCKED, 2 bad input
     "outcome": "passed",
     "evidenceUrl": "https://..."
   },
+  "recovery": {
+    "backupVerifiedAt": "2026-10-10T10:00:00Z",
+    "restoreDrillAt": "2026-10-12T10:00:00Z",
+    "restoreOutcome": "passed",
+    "targetRpoMinutes": 15,
+    "targetRtoMinutes": 60,
+    "measuredRpoMinutes": 5,
+    "measuredRtoMinutes": 40,
+    "invariantsConsistent": true,
+    "criticalFailures": 0,
+    "evidenceUrl": "https://..."
+  },
   "waivers": []
 }
 ```
@@ -164,6 +176,12 @@ npm run release:gate -- evidence.json   # exit 0 PASS, 1 BLOCKED, 2 bad input
 | `tests` | No required suites are declared, a required suite has no result, a suite has failures or ran nothing. A suite that passed only after `retries` is a warning. |
 | `migrations` | Any migration lacks a working `down()`, takes an exclusive lock, or adds a `NOT NULL` column without a default. |
 | `rollback` | Schema changes have no rehearsal, the rehearsal failed, is older than 14 days, is dated in the future, or lacks the previous version, revert command, or rehearser; or the schema changes break rollback. |
+| `recovery` | Schema changes have no recovery evidence, the restore drill failed, the backup check or drill is older than 30 days or dated in the future, measured RPO/RTO exceed their targets (or targets are not positive), or the post-restore DR invariant report (`DisasterRecoveryValidatorService`) is inconsistent or has critical failures. A missing `evidenceUrl` is a warning. |
+
+Issue #493 added the `recovery` gate. `invariantsConsistent` and
+`criticalFailures` come straight from the post-restore
+`DisasterRecoveryValidationReport`; the drill itself runs outside the gate.
+Pass `maxRecoveryAgeDays` to `evaluateReleaseGate` to change the 30-day window.
 
 Authorization: a blocked gate can be waived only by an entry with
 `approverRole: "ADMIN"`, an approver, and a reason of at least 10 characters.
@@ -177,7 +195,9 @@ Edge cases and recovery:
 - Rerunning the gate on the same evidence gives the same result, so it is safe to
   retry in CI.
 - A stale rehearsal is not a code failure; rehearse the rollback again and
-  update `rehearsedAt`.
+  update `rehearsedAt`. The same applies to a stale restore drill or backup check.
+- Recovery evidence added to an existing evidence file is backward compatible:
+  releases without schema changes still pass without it.
 - A flaky suite does not block, but repeated `retries` warnings should be
   investigated before they hide a real failure.
 - If the gate itself is wrong or unavailable, release with an ADMIN waiver and
