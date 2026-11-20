@@ -360,6 +360,20 @@ describe("EventReplayEngine", () => {
     });
     const entries = ledger.export().entries as unknown as StoredEvent[];
 
+    const resumed = engine();
+    await resumed.checkpoints.save({
+      projection: userDirectoryProjection.name,
+      version: userDirectoryProjection.version,
+      sequence: entries[0].sequence,
+      state: userDirectoryProjection.initialState(),
+      savedAt: new Date(0).toISOString(),
+      lastHash: "different-chain-head",
+    });
+    await expect(
+      resumed.engine.rebuild(userDirectoryProjection, arraySource(entries)),
+    ).rejects.toThrow(/Ledger chain broken/);
+    expect(await resumed.store.getActive(userDirectoryProjection.name)).toBeNull();
+
     const ok = await engine().engine.rebuild(
       userDirectoryProjection,
       arraySource(entries),
