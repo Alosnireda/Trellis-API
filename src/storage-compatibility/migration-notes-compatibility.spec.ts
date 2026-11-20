@@ -14,6 +14,7 @@ import {
   DUPLICATE_APPLIED_TIMESTAMP_FIXTURE,
 } from "./fixtures/migration-compatibility-fixtures";
 import { Role, hasRole } from "../common/guard/roles.enum";
+import { VERSIONED_MIGRATION_NOTES } from "./migration-notes.types";
 import { ROLES_KEY } from "../common/guard/roles.decorator";
 import { AppController } from "../app.controller";
 
@@ -193,6 +194,45 @@ describe("Versioned Migration Notes and Compatibility Fixtures (#424)", () => {
         "1710000000000-StellarReconciliationPartitioning",
       );
     });
+  });
+});
+
+describe("Versioned record schema compatibility (#414)", () => {
+  const entries = Object.entries(VERSIONED_MIGRATION_NOTES);
+
+  it("keeps every record's id, version, and embedded timestamp consistent", () => {
+    for (const [id, note] of entries) {
+      expect(note.version).toBe(id);
+      expect(id.startsWith(`${note.timestamp}-`)).toBe(true);
+    }
+  });
+
+  it("only references prerequisites that exist and precede the record", () => {
+    for (const [, note] of entries) {
+      for (const prereq of note.prerequisites ?? []) {
+        const parent = VERSIONED_MIGRATION_NOTES[prereq];
+        expect(parent).toBeDefined();
+        expect(parent.timestamp).toBeLessThan(note.timestamp);
+      }
+    }
+  });
+
+  it("documents rollback guidance and manual steps for breaking or irreversible records", () => {
+    const risky = entries.filter(
+      ([, n]) => !n.reversible || n.impact === "breaking" || n.impact === "security",
+    );
+    expect(risky.length).toBeGreaterThan(0);
+    for (const [, note] of risky) {
+      expect((note.rollbackGuidance ?? "").trim()).not.toBe("");
+      expect(note.manualSteps?.length ?? 0).toBeGreaterThan(0);
+    }
+  });
+
+  it("gives every record a non-empty summary and at least one target table", () => {
+    for (const [, note] of entries) {
+      expect(note.summary.trim()).not.toBe("");
+      expect(note.targetTables.length).toBeGreaterThan(0);
+    }
   });
 });
 

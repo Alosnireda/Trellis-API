@@ -1,6 +1,7 @@
 import { DependencyReport } from "../dependency-health.types";
 import {
   ALL_DEGRADED_CAPABILITIES,
+  CapabilityFallback,
   DegradedCapability,
   DegradedModeDecision,
   DegradedModeLevel,
@@ -35,6 +36,19 @@ export const DEFAULT_DEPENDENCY_CAPABILITY_MAP: DependencyCapabilityMap = {
   otel_collector: [],
   sentry: [],
   ai_provider: [],
+};
+
+/** Degradation matrix (issue #412): per-capability fallback when the capability is disabled. */
+export const CAPABILITY_FALLBACK_MATRIX: Record<DegradedCapability, CapabilityFallback> = {
+  payments: { behavior: "queue_for_later", note: "Hold payouts in queue; retry when Horizon recovers." },
+  trades: { behavior: "reject_with_503", note: "Reject new trades; open positions stay visible read-only." },
+  oracle: { behavior: "queue_for_later", note: "Buffer price submissions; flush when the RPC recovers." },
+  imports: { behavior: "reject_with_503", note: "Refuse new imports; in-flight jobs are checkpointed." },
+  exports: { behavior: "serve_stale", note: "Serve the last successful export snapshot if present." },
+  search: { behavior: "serve_stale", note: "Fall back to cached results; skip live index writes." },
+  notifications: { behavior: "queue_for_later", note: "Queue outbound messages until SMTP/Redis recover." },
+  webhooks: { behavior: "queue_for_later", note: "Queue webhook deliveries with backoff replay." },
+  admin: { behavior: "manual_override", note: "Admin stays up for operators to clear the degraded mode." },
 };
 
 /**

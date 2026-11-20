@@ -60,6 +60,14 @@ export interface DegradedModeDecision {
   generatedAt: string;
 }
 
+/** Declares how a capability behaves when its dependencies are down (issue #412). */
+export interface CapabilityFallback {
+  /** What happens instead of the normal code path. */
+  behavior: "queue_for_later" | "read_only" | "reject_with_503" | "serve_stale" | "manual_override";
+  /** Operator-facing note surfaced in the degraded-mode decision. */
+  note: string;
+}
+
 export interface DegradedModeCapabilityView {
   capability: DegradedCapability;
   state: "available" | "degraded" | "disabled";

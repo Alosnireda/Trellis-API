@@ -327,7 +327,8 @@ export class SnapshotService {
     if (value !== null && typeof value === 'object') {
       const out: Record<string, unknown> = {};
       for (const [k, v] of Object.entries(value as Record<string, unknown>)) {
-        if (SNAPSHOT_REDACTED_FIELDS.includes(k.toLowerCase()) || SNAPSHOT_REDACTED_FIELDS.includes(k)) {
+        const kl = k.toLowerCase();
+        if (SNAPSHOT_REDACTED_FIELDS.some(f => f.toLowerCase() === kl)) {
           out[k] = REDACTED_PLACEHOLDER;
           removed.add(k);
         } else {
