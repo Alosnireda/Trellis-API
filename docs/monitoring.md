@@ -142,3 +142,12 @@ curl -s http://localhost:3001/api/v1/observability/metrics \
 Unit tests cover the metrics endpoint and the trace sampler
 (`src/observability/observability.controller.spec.ts`,
 `src/config/tracing.spec.ts`).
+### External synthetic HTTP check
+
+Set `TRELLIS_SYNTHETIC_BASE_URL` to the deployed API prefix and run
+`node scripts/synthetic-http-check.mjs` from a scheduler. It performs no writes
+and needs no account. It checks for healthy dependencies and verifies that
+export listing rejects unauthenticated reads. Network errors and server errors
+retry twice with backoff. Persistent failure exits nonzero and reports just the
+check name, status, and attempt count. Verify the configured prefix if either
+route returns 404. To disable the check, remove the scheduler entry.

@@ -96,6 +96,27 @@ const successfulHandler = () => ({
 });
 
 describe("IdempotencyService concurrency (harness)", () => {
+  it("reclaims a failed key once when multiple clients retry together", async () => {
+    const { service, repo } = buildService();
+    const request = { key: KEY, scope: SCOPE, requestHash: "retry-body" };
+    await expect(service.execute({
+      ...request,
+      handler: async () => { throw new Error("temporary failure"); },
+    })).rejects.toThrow("temporary failure");
+
+    const handler = jest.fn(async () => successfulHandler());
+    const results = await Promise.allSettled(
+      Array.from({ length: 8 }, () => service.execute({ ...request, handler })),
+    );
+    expect(results.some(result => result.status === "fulfilled")).toBe(true);
+    expect(handler).toHaveBeenCalledTimes(1);
+    expect(repo.rows).toHaveLength(1);
+    const replay = await service.execute({ ...request, handler });
+    expect(replay.replayed).toBe(true);
+    expect(replay.body).toEqual(successfulHandler().body);
+    expect(handler).toHaveBeenCalledTimes(1);
+  });
+
   it("executes the handler exactly once for concurrent duplicate submissions", async () => {
     const { repo, service } = buildService();
     let handlerCalls = 0;
@@ -300,7 +321,7 @@ describe("IdempotencyService concurrency (harness)", () => {
       expect(bobSuccess?.value?.body).toEqual({ txId: "tx-bob" });
     });
 
-    it("cleans up in-progress record when handler fails so subsequent retries can succeed", async () => {
+    it("marks the record failed so subsequent retries can reclaim it", async () => {
       const { service, repo } = buildService();
       let attempts = 0;
 
@@ -320,8 +341,8 @@ describe("IdempotencyService concurrency (harness)", () => {
         }),
       ).rejects.toThrow("Downstream gateway timeout");
 
-      // Verify in_progress record was removed on failure
-      expect(repo.rows).toHaveLength(0);
+      expect(repo.rows).toHaveLength(1);
+      expect(repo.rows[0].status).toBe(IdempotencyRecordStatus.FAILED);
 
       // Retry execution now succeeds
       const retryResult = await service.execute({
