@@ -65,6 +65,13 @@ This document outlines the operational specifications, safety guardrails, and ro
 | `COMPLIANCE_OFFICER` | Plaintext | Plaintext | Masked / Redacted | Stripped |
 | `ADMIN` | Plaintext | Plaintext | Plaintext | Stripped |
 
+### Edge Cases & Recovery (#564)
+- Field keys match case-insensitively with or without underscores: `first_name` / `firstName`, `last_name` / `lastName` and `date_of_birth` / `dateOfBirth` are all `RESTRICTED_PII`.
+- Multi-value PII fields (e.g. `emails: [...]`) are masked element by element, including nested arrays, and stay arrays. Before this, the whole array was masked as one string, which for e-mail lists exposed every address after the first.
+- Keys that match no pattern default to `PUBLIC`, so a new PII column needs a pattern before it is exported.
+- Masking runs on the raw record each time an export is generated, so a retried `processExport` masks from source again and produces the same output.
+- Migration: a consumer that read a masked array field as a string now receives an array of masked strings. The current extractors emit no array-valued PII, so existing exports are unaffected. Rollback is a code revert; exports generated in the meantime keep their masking until they expire.
+
 ---
 
 ## 4. Feature Rollout Guardrails with Emergency Disablement (Issues #297, #489)
