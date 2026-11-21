@@ -120,3 +120,9 @@ featureRolloutService.liftEmergencyDisable(
 - Clears the emergency disabled flag.
 - Resets consecutive error counters to 0.
 - Re-enables allowlisted users for verification before increasing percentage.
+
+#### 3. Kill-Switch Edge Cases (#565)
+- Lifting is the only way to clear an emergency disablement. Re-registering the key (`POST /admin/features`) keeps `emergencyDisabled`, `enabled: false` and the original reason, actor and timestamp. The submitted description, allowlists and error threshold are stored; the rollout percentage is replaced by the canary percentage when the feature is lifted.
+- Lifting a feature that is not emergency-disabled returns `409 Conflict`, is audited as `apply_failed` and changes nothing. A retried or duplicate lift therefore cannot reset a widened rollout back to the canary percentage, and it cannot switch on a feature that was turned off with `enabled: false`.
+- Only `ADMIN` and `MAINTAINER` can lift or re-register. Other roles get `403` and the kill switch stays active.
+- Migration: callers that used `lift-emergency-disable` to set a canary percentage on a healthy feature must use `PATCH /admin/features/:key` with `rolloutPercentage` instead.
