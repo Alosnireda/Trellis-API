@@ -15,7 +15,7 @@
  *
  * Usage
  * ─────
- *   import { generateRareFailureFixtures } from './rare-failure-fixture-generator';
+ *   const { generateRareFailureFixtures } = require('./rare-failure-fixture-generator');
  *   const dataset = generateRareFailureFixtures({ seed: 42 });
  */
 

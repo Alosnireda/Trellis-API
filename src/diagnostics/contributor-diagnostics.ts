@@ -24,7 +24,7 @@
  *
  * Usage (added to `scripts/diagnostics.ts` `tools` section)
  * ──────────────────────────────────────────────────────────
- *   import { runContributorChecks } from '../src/diagnostics/contributor-diagnostics';
+ *   const { runContributorChecks } = require('../src/diagnostics/contributor-diagnostics');
  *   const contributorChecks = await runContributorChecks(io);
  *   results.push(...contributorChecks);
  */
